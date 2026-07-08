@@ -13,21 +13,19 @@
 - Notes:
 
 
-Session: Phase 1.1
+### Session 2026-07-09 — Phase 1.1
 
-- Goal:
-Setup môi trường TradingAgents.
-
-- Done:
-- Tạo virtualenv
-- Cài package
-- CLI chạy thành công
-
-- Test:
-tradingagents --help ✅
-
+- Step: Phase 1.1 — Setup development environment
+- Goal: Repo gốc chạy được local.
+- What was done:
+  - Created Python virtual environment `.venv`
+  - Installed TradingAgents package
+  - Verified CLI works
+- Test result:
+  - `tradingagents --help` ✅
 - Commit:
-(chưa có)
-
-- Next:
-Phase 1.2 - Chạy demo gốc
+  - pending
+- Next step:
+  - Phase 1.2 — Run baseline demo
+- Notes:
+  - Python 3.13.1
