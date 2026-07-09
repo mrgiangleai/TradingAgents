@@ -185,3 +185,26 @@ Commit:
 
 Next:
 - Phase 3.4 — Combination testing: disable 2, 3, and all 4 analysts together; verify the all-4-disabled case still fails fast with a clear error (mechanism already verified in Phase 3.2, not yet re-verified through the now-complete 4-flag config surface).
+
+---
+
+## Phase 3.4
+
+Done:
+- Test-only session, per scope ("không sửa code nếu không phát hiện lỗi thật"): **no changes to `tradingagents/`** — all 3 combination scenarios (2 off, 3 off, all 4 off) behaved exactly as `agent_toggle_design.md` predicted, so there was nothing to fix.
+- Ran structural checks (no LLM calls) for 2-off and 3-off combos: node count drops by exactly 3 per disabled analyst (20 → 14 for 2 off, → 11 for 3 off), no orphaned nodes/edges.
+- Ran 2 live full-pipeline runs (memory test): Market+Sentiment off together (GOOGL, 2026-07-09, 38.8s) → both `market_report` and `sentiment_report` empty, `news_report`/`fundamentals_report` populated, decision produced. Only Fundamentals on (3 off: Market+Sentiment+News, NFLX, 2026-07-09, 30.6s) → 3 reports empty, only `fundamentals_report` populated, decision produced. Neither crashed; debate and risk-debate loops still completed normally with only 1–2 real reports feeding them.
+- Re-verified the all-4-disabled boundary case through the now-complete 4-flag config surface (Phase 3.2 only proved the mechanism via `analyst_execution.py` directly, not through all 4 config keys at once): `TradingAgentsGraph(config=config)` with all 4 `enable_*_analyst=False` raises `ValueError: at least one analyst must be selected` in 0.722s — before `propagate()` is ever called, so no LLM cost incurred.
+
+Test:
+- ✅ All 3 combination scenarios: no unexpected crash, all-4-off produces a clear, fail-fast error — matches Bước 3.4's stated completion criteria exactly.
+- Full results tables in `TEST_PLAN.md` under "Phase 3.4".
+
+Memory path used this session:
+- `~/.tradingagents/memory/test_memory.md` (via `TRADINGAGENTS_MEMORY_LOG_PATH`), for the 2 live combo runs (GOOGL, NFLX). `test_memory.md` now has 9 pending entries total; `trading_memory.md` (real memory) still does not exist.
+
+Commit:
+- test: analyst toggle combinations
+
+Next:
+- Phase 3 (Analyst toggle) is complete — all 4 analysts have working, independently-tested config toggles, single-analyst and combination cases both verified. Next up per ROADMAP.md is Phase 4 — Bước 4.1: define the KeyVolume/Liquidity static data format + file-mapping convention (`docs/data/keyvolume_data_format.md`), not started this session.

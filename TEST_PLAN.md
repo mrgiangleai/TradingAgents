@@ -165,3 +165,57 @@ Cảnh báo SSL StockTwits/Reddit + thiếu `FRED_API_KEY` xuất hiện ở cá
 - [x] Pattern giống hệt Phase 3.2 (chỉ 2 file `default_config.py` + `trading_graph.py`, không đụng `setup.py`/`analyst_execution.py`/`agents/`).
 - [x] 3 commit riêng biệt, mỗi analyst 1 commit.
 - [x] Bảng trên đánh ✅ đủ 4 analyst.
+
+---
+
+## Phase 3.4 — Test tổ hợp bật/tắt nhiều analyst cùng lúc
+
+**Ngày chạy:** 2026-07-09
+**Memory path dùng:** `~/.tradingagents/memory/test_memory.md` (Quy tắc 1)
+**Mục tiêu:** Kiểm chứng cơ chế toggle (Phase 3.2/3.3) ổn định khi **nhiều** analyst tắt cùng lúc, không chỉ từng cái riêng lẻ. Chỉ test — **không sửa code**, vì không phát hiện lỗi thật nào (xem kết luận cuối mục).
+
+### Test 1 — Kiểm tra cấu trúc graph cho tổ hợp tắt 2 và tắt 3 (không tốn API)
+
+| Tổ hợp | Cờ tắt | `selected_analysts` build ra | Số node |
+|---|---|---|---|
+| Tắt 2 | `enable_market_analyst=False`, `enable_sentiment_analyst=False` | `('news', 'fundamentals')` | 14 (đúng: 20 gốc − 2×3 node/analyst) |
+| Tắt 3 | + `enable_news_analyst=False` | `('fundamentals',)` | 11 (chỉ còn 1 analyst + 8 node cố định + 2 node phụ trợ của nó) |
+
+→ Số node giảm đúng tỷ lệ (mỗi analyst tắt = −3 node: agent node + tool node + msg-clear node), không có node "mồ côi" hay cạnh treo.
+
+### Test 2 — Chạy full pipeline thật, tắt 2 và tắt 3 analyst cùng lúc (memory test)
+
+| Tổ hợp | Ticker / ngày | `selected_analysts` | Crash? | Report tắt → rỗng đúng? | Report còn bật | Quyết định cuối | Thời gian |
+|---|---|---|---|---|---|---|---|
+| Tắt 2 (Market + Sentiment) | GOOGL / 2026-07-09 | `('news', 'fundamentals')` | ❌ Không | ✅ `market_report` và `sentiment_report` đều rỗng | news 3217 / fundamentals 3404 ký tự | Buy | 38.8s |
+| Tắt 3 (chỉ Fundamentals bật) | NFLX / 2026-07-09 | `('fundamentals',)` | ❌ Không | ✅ `market_report`, `sentiment_report`, `news_report` đều rỗng | fundamentals 2708 ký tự | Overweight | 30.6s |
+
+Cả 2 lần chạy: debate (Bull/Bear) và risk debate (Aggressive/Conservative/Neutral) vẫn chạy đủ vòng, Research Manager/Trader/Portfolio Manager vẫn sinh output hợp lệ dù chỉ có 1–2 report gốc — khớp dự đoán thiết kế mục 4.1/4.2 của `agent_toggle_design.md` (report rỗng không gây `KeyError`, không chặn debate).
+
+### Test 3 — Hành vi biên: tắt cả 4 analyst cùng lúc
+
+```
+config["enable_market_analyst"] = False
+config["enable_sentiment_analyst"] = False
+config["enable_news_analyst"] = False
+config["enable_fundamentals_analyst"] = False
+TradingAgentsGraph(config=config)
+```
+
+→ Raise ngay `ValueError: at least one analyst must be selected`, trong **0.722 giây** (chỉ là overhead khởi tạo LLM client object, không có lệnh gọi API thật — `propagate()` chưa từng được gọi). Đúng như dự đoán thiết kế mục 5 của `agent_toggle_design.md`: cơ chế có sẵn từ `analyst_execution.py` (Phase 2, không phải code mới của Phase 3) đã xử lý đúng case này qua toàn bộ 4 cờ config mới, không cần sửa gì thêm.
+
+### Kết luận: không phát hiện lỗi thật → không sửa code
+
+Cả 3 tổ hợp (tắt 2 / tắt 3 / tắt cả 4) đều hoạt động đúng như thiết kế dự đoán ở Bước 3.1, không có crash bất ngờ, không có hành vi lệch. Theo đúng yêu cầu phiên này ("không sửa code nếu không phát hiện lỗi thật"), **không có thay đổi nào trong `tradingagents/`** ở Bước 3.4 — chỉ ghi nhận kết quả test.
+
+### Kiểm chứng cách ly memory (Quy tắc 1)
+
+- ✅ `test_memory.md` có thêm 2 entry mới: `[2026-07-09 | GOOGL | Buy | pending]`, `[2026-07-09 | NFLX | Overweight | pending]` (tổng 9 entry `ENTRY_END` trong file).
+- ✅ `trading_memory.md` (memory thật) — vẫn không tồn tại.
+
+### Điều kiện hoàn thành Bước 3.4
+
+- [x] Tắt 2 analyst cùng lúc — chạy thật, không crash.
+- [x] Tắt 3 analyst cùng lúc — chạy thật, không crash.
+- [x] Tắt cả 4 — báo lỗi rõ ràng (`ValueError`), fail-fast, không chạy input rỗng.
+- [x] Không phát hiện lỗi thật → không sửa code (đúng yêu cầu phiên này).
