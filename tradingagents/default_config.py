@@ -28,6 +28,7 @@ _ENV_OVERRIDES = {
     # Analyst toggles (Phase 3). One row per analyst; add here as each
     # analyst gets a flag (see docs/architecture/agent_toggle_design.md).
     "TRADINGAGENTS_ENABLE_MARKET_ANALYST":   "enable_market_analyst",
+    "TRADINGAGENTS_ENABLE_SENTIMENT_ANALYST": "enable_sentiment_analyst",
 }
 
 
@@ -111,6 +112,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # TradingAgentsGraph.__init__ (graph/trading_graph.py) — the single
     # place enable/disable logic lives, per Quy tac 5 in ROADMAP.md.
     "enable_market_analyst": True,
+    "enable_sentiment_analyst": True,
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",

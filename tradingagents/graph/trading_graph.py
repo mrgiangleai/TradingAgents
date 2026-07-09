@@ -145,12 +145,11 @@ class TradingAgentsGraph:
         # Analyst toggle (Phase 3, Analyst group only): filter the requested
         # selected_analysts against per-analyst config flags before the graph
         # is built. This is the single place enable/disable logic lives
-        # (Quy tac 5) -- no agent file checks a config flag itself. Only
-        # Market Analyst has a flag so far; the rest default to enabled
-        # until Phase 3.3 adds their flags here too. See
+        # (Quy tac 5) -- no agent file checks a config flag itself. See
         # docs/architecture/agent_toggle_design.md.
         analyst_enabled = {
             "market": self.config.get("enable_market_analyst", True),
+            "social": self.config.get("enable_sentiment_analyst", True),
         }
         filtered_analysts = tuple(
             key for key in selected_analysts if analyst_enabled.get(key, True)
