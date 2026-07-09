@@ -109,3 +109,27 @@ Commit:
 
 Next:
 - Phase 3.1 — Design analyst toggle (not started; Phase 2 is complete as of this session).
+
+---
+
+## Phase 3.1
+
+Done:
+- Design-only (no code changes): wrote `docs/architecture/agent_toggle_design.md`.
+- Read `tradingagents/graph/setup.py`, `analyst_execution.py`, `propagation.py`, `trading_graph.py`, and `agents/researchers/bull_researcher.py` to confirm two load-bearing facts before designing: (1) the graph-build layer (`setup_graph` + `build_analyst_execution_plan`) already supports building the graph with any subset of the 4 analysts, including raising `ValueError("at least one analyst must be selected")` on an empty set — so the "all 4 disabled" error case needs no new code; (2) `Propagator.create_initial_state()` always initializes all 4 report fields to `""` regardless of `selected_analysts`, so a disabled analyst never causes a `KeyError` downstream — only an empty string reaches the 5 nodes that read `market_report`/`sentiment_report`/`news_report`/`fundamentals_report` directly (Bull/Bear Researcher + 3 risk debators).
+- Designed 4 flat boolean config keys (`enable_market_analyst`, `enable_sentiment_analyst`, `enable_news_analyst`, `enable_fundamentals_analyst`, default `True`, each independently overridable via `TRADINGAGENTS_ENABLE_*` following the existing `_ENV_OVERRIDES` pattern) instead of one nested dict, specifically because `_ENV_OVERRIDES` coercion doesn't support nested dicts and Bước 3.4's combination testing needs per-analyst env-var control.
+- Decided the single file to touch in Bước 3.2/3.3 is `tradingagents/graph/trading_graph.py` — filter `selected_analysts` against the config flags right before `self.graph_setup.setup_graph(...)`, and assign the **filtered** tuple (not the raw constructor arg) to `self.selected_analysts`, because that field feeds `_run_signature()` for the checkpoint thread ID (`#1089`) — using the unfiltered tuple there would let a checkpoint silently resume under a stale analyst selection.
+- Decision 3.1-A: when an analyst is disabled, its report field is left as the empty string with no added "N/A" handling in any `agents/researchers/` or `agents/risk_mgmt/` file — adding per-report empty-checks there would itself be the kind of scattered `if enabled` logic Quy tắc 5 prohibits. Documented this as an explicit, revisitable decision, not an oversight.
+- Answered the roadmap's self-check question directly in the doc: disabling Sentiment Analyst leaves `sentiment_report` as `""`; Bull/Bear Researcher still read it unconditionally, producing a blank `Social media sentiment report: ` line — no crash, no special-casing added.
+
+Test:
+- N/A — design/documentation only, no code run this session (per Bước 3.1 scope).
+
+Memory path used this session:
+- N/A (no LLM run this session — design/doc work only).
+
+Commit:
+- docs: design analyst toggle
+
+Next:
+- Phase 3.2 — Implement the toggle for one analyst (pick the "easiest" one per the Bước 2.2 table — Phase 2.2 audit found no structural difference between the 4 analysts, so any one is equally easy to start with) → edit `tradingagents/default_config.py` (add the 4 flags) and `tradingagents/graph/trading_graph.py` (filtering logic, per this session's design) only.
