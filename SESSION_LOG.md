@@ -158,3 +158,30 @@ Commit:
 
 Next:
 - Phase 3.3 — Toggle the remaining 3 analysts (Sentiment, News, Fundamentals), one commit each, same pattern as this session (extend `enable_*_analyst` in `default_config.py` + the `analyst_enabled` map in `trading_graph.py`).
+
+---
+
+## Phase 3.3
+
+Done:
+- Added toggles for the 3 remaining analysts — Sentiment, News, Fundamentals — repeating the exact Phase 3.2 pattern for each: 1 default key + 1 `_ENV_OVERRIDES` row in `tradingagents/default_config.py`, and 1 line added to the `analyst_enabled` dict in `tradingagents/graph/trading_graph.py`. No changes to `setup.py`, `analyst_execution.py`, or any `agents/` file — same 2-file scope as Phase 3.2, `Researcher`/`Risk`/`Portfolio Manager` untouched.
+- Made 3 separate commits, one per analyst, per ROADMAP.md Bước 3.3 ("mỗi analyst 1 commit riêng"): `feat: add toggle for sentiment analyst`, `feat: add toggle for news analyst`, `feat: add toggle for fundamentals analyst`.
+- All 4 config keys now exist: `enable_market_analyst`, `enable_sentiment_analyst`, `enable_news_analyst`, `enable_fundamentals_analyst` (all default `True`), each independently overridable via `TRADINGAGENTS_ENABLE_*_ANALYST`.
+
+Test:
+- ✅ Structural check (no LLM calls) for each of the 3: disabling the flag removes exactly that analyst's 3 nodes (20 → 17), leaves the other 3 analysts and all non-analyst nodes untouched.
+- ✅ Live pipeline run per analyst with that analyst disabled (memory test): Sentiment off (AMD, 2026-07-09, 83.1s) → `sentiment_report == ""`, other 3 reports populated, decision produced. News off (META, 2026-07-09, 48.1s) → `news_report == ""`, same pattern. Fundamentals off (AMZN, 2026-07-09, 42.4s) → `fundamentals_report == ""`, same pattern. None crashed.
+- Deliberately did not re-run live "enabled" cases per analyst (would just re-confirm the unchanged default 4-analyst baseline already covered by Phase 1.2/3.2 and by the structural check) — matches Bước 3.3's stated check criterion ("Tắt từng analyst riêng lẻ, không lỗi") without redundant LLM spend.
+- Full results tables in `TEST_PLAN.md` under "Phase 3.3", including the final ✅×4 summary table required by Bước 3.3's completion criteria.
+
+Memory path used this session:
+- `~/.tradingagents/memory/test_memory.md` (via `TRADINGAGENTS_MEMORY_LOG_PATH`), for the 3 live disabled-analyst runs. `test_memory.md` now has 7 pending entries total; `trading_memory.md` (real memory) still does not exist.
+
+Commit:
+- feat: add toggle for sentiment analyst
+- feat: add toggle for news analyst
+- feat: add toggle for fundamentals analyst
+- docs: record phase 3.3 test results (this TEST_PLAN.md / SESSION_LOG.md update)
+
+Next:
+- Phase 3.4 — Combination testing: disable 2, 3, and all 4 analysts together; verify the all-4-disabled case still fails fast with a clear error (mechanism already verified in Phase 3.2, not yet re-verified through the now-complete 4-flag config surface).
