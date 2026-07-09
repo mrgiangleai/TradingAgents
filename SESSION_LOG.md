@@ -133,3 +133,28 @@ Commit:
 
 Next:
 - Phase 3.2 — Implement the toggle for one analyst (pick the "easiest" one per the Bước 2.2 table — Phase 2.2 audit found no structural difference between the 4 analysts, so any one is equally easy to start with) → edit `tradingagents/default_config.py` (add the 4 flags) and `tradingagents/graph/trading_graph.py` (filtering logic, per this session's design) only.
+
+---
+
+## Phase 3.2
+
+Done:
+- Implemented the toggle for the first analyst — **Market Analyst** (picked per Phase 2.2's finding that all 4 are structurally equivalent, so any one works; Market Analyst is first in `ANALYST_NODE_SPECS`/the default pipeline order).
+- Touched exactly 2 files, matching `docs/architecture/agent_toggle_design.md`: `tradingagents/default_config.py` (added `enable_market_analyst: True` + one `_ENV_OVERRIDES` row for `TRADINGAGENTS_ENABLE_MARKET_ANALYST`) and `tradingagents/graph/trading_graph.py` (filter `selected_analysts` against config flags right before `graph_setup.setup_graph(...)` in `TradingAgentsGraph.__init__`, assign the **filtered** tuple to `self.selected_analysts` so the checkpoint signature (`#1089`) reflects the real graph shape). No changes to `setup.py`, `analyst_execution.py`, or any `agents/` file.
+- Kept the filter map (`analyst_enabled = {"market": ...}`) scoped to only the one flag that exists so far — deliberately did not pre-wire config-key lookups for the other 3 analysts, to avoid reaching into Phase 3.3's scope.
+
+Test:
+- ✅ Structural check (no LLM calls): `enable_market_analyst=False` removes exactly 3 nodes (`Market Analyst`, `tools_market`, `Msg Clear Market`) — 20 nodes → 17 nodes; `True` keeps the original 20-node graph unchanged.
+- ✅ Boundary case: disabling the only requested analyst (`selected_analysts=("market",)` + `enable_market_analyst=False`) raises `ValueError: at least one analyst must be selected` at `__init__` time (fail-fast, before any LLM call) — no new code needed, reused the existing `analyst_execution.py` guard via the new filtering path.
+- ✅ Full pipeline, 2 live runs (memory test): enabled (NVDA, 2026-07-09) → `market_report` has content (2993 chars), decision = Buy, 52.0s. Disabled (TSLA, 2026-07-09, `enable_market_analyst=False`) → `market_report == ""`, other 3 reports unaffected (1698/2653/3211 chars), decision = Hold, 44.2s. Neither run crashed.
+- ✅ `test_memory.md` got 2 new pending entries (NVDA, TSLA); `trading_memory.md` (real memory) still does not exist.
+- Full results table in `TEST_PLAN.md` under "Phase 3.2".
+
+Memory path used this session:
+- `~/.tradingagents/memory/test_memory.md` (via `TRADINGAGENTS_MEMORY_LOG_PATH`), for the 2 live pipeline runs.
+
+Commit:
+- feat: add toggle for market analyst
+
+Next:
+- Phase 3.3 — Toggle the remaining 3 analysts (Sentiment, News, Fundamentals), one commit each, same pattern as this session (extend `enable_*_analyst` in `default_config.py` + the `analyst_enabled` map in `trading_graph.py`).

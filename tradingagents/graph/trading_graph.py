@@ -142,11 +142,27 @@ class TradingAgentsGraph:
         self.ticker = None
         self.log_states_dict = {}  # date to full state dict
 
+        # Analyst toggle (Phase 3, Analyst group only): filter the requested
+        # selected_analysts against per-analyst config flags before the graph
+        # is built. This is the single place enable/disable logic lives
+        # (Quy tac 5) -- no agent file checks a config flag itself. Only
+        # Market Analyst has a flag so far; the rest default to enabled
+        # until Phase 3.3 adds their flags here too. See
+        # docs/architecture/agent_toggle_design.md.
+        analyst_enabled = {
+            "market": self.config.get("enable_market_analyst", True),
+        }
+        filtered_analysts = tuple(
+            key for key in selected_analysts if analyst_enabled.get(key, True)
+        )
+
         # Graph-shape-affecting run choices, kept for the checkpoint signature.
-        self.selected_analysts = tuple(selected_analysts)
+        # Must be the filtered tuple so a checkpoint from a different analyst
+        # selection is invalidated instead of silently resumed (#1089).
+        self.selected_analysts = filtered_analysts
 
         # Set up the graph: keep the workflow for recompilation with a checkpointer.
-        self.workflow = self.graph_setup.setup_graph(selected_analysts)
+        self.workflow = self.graph_setup.setup_graph(filtered_analysts)
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 

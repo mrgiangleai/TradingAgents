@@ -25,6 +25,9 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_GOOGLE_THINKING_LEVEL":   "google_thinking_level",
     "TRADINGAGENTS_OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
     "TRADINGAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
+    # Analyst toggles (Phase 3). One row per analyst; add here as each
+    # analyst gets a flag (see docs/architecture/agent_toggle_design.md).
+    "TRADINGAGENTS_ENABLE_MARKET_ANALYST":   "enable_market_analyst",
 }
 
 
@@ -103,6 +106,11 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Checkpoint/resume: when True, LangGraph saves state after each node
     # so a crashed run can resume from the last successful step.
     "checkpoint_enabled": False,
+    # Analyst toggles (Phase 3, Analyst group only). True = included in the
+    # graph when the caller requests it via selected_analysts. Filtered in
+    # TradingAgentsGraph.__init__ (graph/trading_graph.py) — the single
+    # place enable/disable logic lives, per Quy tac 5 in ROADMAP.md.
+    "enable_market_analyst": True,
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",

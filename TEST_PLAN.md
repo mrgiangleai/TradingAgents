@@ -57,3 +57,60 @@ Ghi chú: ban đầu thử provider `openai` với model `gpt-5.4-nano` (rẻ nh
 - [x] `test_memory.md` có entry mới.
 - [x] Memory thật không có entry mới.
 - [x] Baseline (thời gian, số API call, chi phí ước tính) ghi lại ở trên.
+
+---
+
+## Phase 3.2 — Toggle Market Analyst (analyst đầu tiên)
+
+**Ngày chạy:** 2026-07-09
+**Memory path dùng:** `~/.tradingagents/memory/test_memory.md` (Quy tắc 1)
+**Analyst chọn để toggle đầu tiên:** Market Analyst — Phase 2.2 (`agents_inventory.md`) xác nhận cả 4 analyst có cấu trúc tham chiếu giống hệt nhau (không ai "dễ" hơn), nên chọn analyst đầu tiên trong `ANALYST_NODE_SPECS`/pipeline mặc định.
+
+### Thay đổi (đúng theo thiết kế `docs/architecture/agent_toggle_design.md`)
+
+Chỉ 2 file bị sửa:
+- `tradingagents/default_config.py` — thêm key `enable_market_analyst: True` (mặc định giữ nguyên hành vi cũ) + 1 dòng trong `_ENV_OVERRIDES` cho `TRADINGAGENTS_ENABLE_MARKET_ANALYST`.
+- `tradingagents/graph/trading_graph.py` — trong `TradingAgentsGraph.__init__`, lọc `selected_analysts` theo cờ config **trước** khi gọi `self.graph_setup.setup_graph(...)`, và gán tuple đã lọc (không phải tham số gốc) vào `self.selected_analysts` (dùng cho checkpoint signature, `#1089`).
+
+Không sửa `setup.py`, `analyst_execution.py`, hay bất kỳ file `agents/` nào — đúng Quy tắc 5 và đúng phạm vi thiết kế Bước 3.1.
+
+### Test 1 — Kiểm tra cấu trúc graph (không tốn API, không chạy LLM)
+
+| Case | `selected_analysts` build ra | Node "Market Analyst" có mặt? | Tổng số node |
+|---|---|---|---|
+| `enable_market_analyst=True` (mặc định) | `('market', 'social', 'news', 'fundamentals')` | ✅ Có | 20 |
+| `enable_market_analyst=False` | `('social', 'news', 'fundamentals')` | ❌ Không | 17 |
+
+→ Đúng như thiết kế: tắt Market Analyst loại bỏ đúng 3 node liên quan (`Market Analyst`, `tools_market`, `Msg Clear Market`), không ảnh hưởng node khác.
+
+### Test 2 — Hành vi biên: tắt analyst duy nhất được yêu cầu
+
+`TradingAgentsGraph(selected_analysts=("market",), config={"enable_market_analyst": False, ...})` → raise ngay `ValueError: at least one analyst must be selected`, **trước khi gọi LLM nào** (fail-fast tại `__init__`). Khớp thiết kế mục 5 của `agent_toggle_design.md` — không cần code mới, cơ chế có sẵn trong `analyst_execution.py` hoạt động đúng qua đường lọc mới.
+
+### Test 3 — Chạy full pipeline 2 lần (bật / tắt), memory test
+
+| | Bật (mặc định) | Tắt (`enable_market_analyst=False`) |
+|---|---|---|
+| Ticker / ngày | NVDA / 2026-07-09 | TSLA / 2026-07-09 |
+| `selected_analysts` build ra | `('market', 'social', 'news', 'fundamentals')` | `('social', 'news', 'fundamentals')` |
+| Crash? | ❌ Không | ❌ Không |
+| `market_report` rỗng? | Không (2993 ký tự) | ✅ Có (`""`) |
+| `sentiment_report` / `news_report` / `fundamentals_report` | Có nội dung | Có nội dung (1698 / 2653 / 3211 ký tự — không bị ảnh hưởng bởi việc tắt Market Analyst) |
+| Quyết định cuối sinh ra? | ✅ Buy, 2% position | ✅ Hold |
+| Thời gian chạy | 52.0s | 44.2s (nhanh hơn — ít hơn 1 vòng tool-call analyst) |
+
+Ghi chú: dùng 2 ticker khác nhau (NVDA / TSLA) để tránh trùng key `ticker+date` trong memory log giữa 2 lần chạy test, không phải vì lý do kỹ thuật khác.
+
+Cảnh báo SSL StockTwits/Reddit + thiếu `FRED_API_KEY` xuất hiện ở cả 2 lần chạy — giống hệt cảnh báo đã ghi nhận ở Phase 1.2/2.3, là vấn đề môi trường cục bộ có sẵn từ trước, không liên quan đến thay đổi Phase 3.2, không chặn kết quả.
+
+### Kiểm chứng cách ly memory (Quy tắc 1)
+
+- ✅ `test_memory.md` có thêm 2 entry mới: `[2026-07-09 | NVDA | Buy | pending]` và `[2026-07-09 | TSLA | Hold | pending]` (tổng 4 entry `ENTRY_END` trong file, gồm 2 entry cũ từ Phase 1.2/2.3).
+- ✅ `trading_memory.md` (memory thật) — vẫn không tồn tại.
+
+### Điều kiện hoàn thành Bước 3.2
+
+- [x] Cờ config `enable_market_analyst` hoạt động đúng — bật giữ nguyên hành vi cũ, tắt loại bỏ đúng node liên quan.
+- [x] Chạy 2 lần (bật/tắt) với memory test, so sánh output — không crash, field đúng như thiết kế dự đoán.
+- [x] Hành vi biên (tắt analyst duy nhất được chọn) báo lỗi rõ ràng, fail-fast.
+- [x] Chỉ 2 file bị sửa (`default_config.py`, `graph/trading_graph.py`) — đúng tối thiểu, đúng Quy tắc 5.
