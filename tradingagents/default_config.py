@@ -29,6 +29,7 @@ _ENV_OVERRIDES = {
     # analyst gets a flag (see docs/architecture/agent_toggle_design.md).
     "TRADINGAGENTS_ENABLE_MARKET_ANALYST":   "enable_market_analyst",
     "TRADINGAGENTS_ENABLE_SENTIMENT_ANALYST": "enable_sentiment_analyst",
+    "TRADINGAGENTS_ENABLE_NEWS_ANALYST":      "enable_news_analyst",
 }
 
 
@@ -113,6 +114,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # place enable/disable logic lives, per Quy tac 5 in ROADMAP.md.
     "enable_market_analyst": True,
     "enable_sentiment_analyst": True,
+    "enable_news_analyst": True,
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",

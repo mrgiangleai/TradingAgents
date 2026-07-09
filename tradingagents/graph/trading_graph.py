@@ -150,6 +150,7 @@ class TradingAgentsGraph:
         analyst_enabled = {
             "market": self.config.get("enable_market_analyst", True),
             "social": self.config.get("enable_sentiment_analyst", True),
+            "news": self.config.get("enable_news_analyst", True),
         }
         filtered_analysts = tuple(
             key for key in selected_analysts if analyst_enabled.get(key, True)
