@@ -30,6 +30,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_ENABLE_MARKET_ANALYST":   "enable_market_analyst",
     "TRADINGAGENTS_ENABLE_SENTIMENT_ANALYST": "enable_sentiment_analyst",
     "TRADINGAGENTS_ENABLE_NEWS_ANALYST":      "enable_news_analyst",
+    "TRADINGAGENTS_ENABLE_FUNDAMENTALS_ANALYST": "enable_fundamentals_analyst",
 }
 
 
@@ -115,6 +116,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "enable_market_analyst": True,
     "enable_sentiment_analyst": True,
     "enable_news_analyst": True,
+    "enable_fundamentals_analyst": True,
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",
