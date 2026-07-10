@@ -313,3 +313,31 @@ Commit:
 Next:
 - Phase 7 — Market Bias / Final Advisor: combine the 4 analyst reports + `keyvolume_report` + `liquidity_sweep_report` into one synthesized advisory read. Not started; both supplementary reports currently sit in state/report but nothing downstream reads either one yet.
 - Phase 8 — Decision Log & Backtest Evidence: `_log_state` in `trading_graph.py` still doesn't include `keyvolume_report`/`liquidity_sweep_report` (deliberately out of scope for Phase 5.3/6.3, reserved for Phase 8's "extend decision log" step).
+
+---
+
+## Phase 7 (Final Advisor)
+
+Done:
+- Made the required architecture call explicit up front: **Final Advisor is additive, not a replacement for Portfolio Manager.** New node `Portfolio Manager -> Final Advisor -> END`, writing to a brand-new state field `final_advisory_report` -- `final_trade_decision` (and everything that reads it: `memory_log.store_decision`, `SignalProcessor.process_signal`, `_log_state`, `reporting.py` section V) is completely untouched. Full reasoning in `docs/agents/final_advisor_design.md` section 1: replacing/modifying Portfolio Manager would touch a contract several other things depend on, and ROADMAP.md itself flags "khong pha format decision log hien co (Phase 8 phu thuoc)" as a hard constraint.
+- Final Advisor's input is deliberately narrow: `final_trade_decision` (always present, Portfolio Manager isn't toggleable) plus `keyvolume_report`/`liquidity_sweep_report` (each may be absent, `no_data`, or a real signal). It does NOT re-read the 4 raw analyst reports or debate history -- matches the existing system convention that every synthesis layer reads only the immediately-prior layer's output (Trader reads only `investment_plan`, not raw reports or debate; Portfolio Manager reads only risk debate + 2 plans, not raw reports either), so Final Advisor doesn't duplicate context Portfolio Manager already synthesized.
+- Structured output: added `FinalAdvisoryReport` to `schemas.py`, deliberately reusing the existing `PortfolioRating` enum rather than inventing a new rating scale, plus `render_final_advisory_report`. Found and fixed a real correctness gap while writing this: `invoke_structured_or_freetext`'s free-text fallback path returns `response.content` directly, bypassing the `render` function entirely -- so the Quy tac 3 "advisory only" disclaimer can't live inside `render_final_advisory_report` (it would be silently dropped on that fallback path). Fixed by appending the disclaimer as a fixed, non-model-generated string in `final_advisor.py` itself, after calling `invoke_structured_or_freetext`, covering both paths uniformly.
+- Built `tradingagents/agents/managers/final_advisor.py::create_final_advisor(llm)`, exported via `agents/__init__.py` (same pattern as `create_portfolio_manager`), wired into `graph/setup.py` using `deep_thinking_llm` (same reasoning-depth tier as Research Manager/Portfolio Manager -- this is also a final synthesis/judgment node, not a mechanical task). No toggle flag of its own: Final Advisor always runs, in every configuration, unlike KeyVolume/Liquidity Sweep which are opt-in signals.
+- Added `final_advisory_report` to `AgentState` (agent_states.py) and a new, purely additive "VIII. Final Advisor (Advisory Only)" / `8_final_advisor/` section to `reporting.py`, after section VII -- no renumbering, verified no regression against `tests/test_reporting.py`'s exact fixture.
+- Deliberately did not touch: Portfolio Manager, Trader, Research Manager, Bull/Bear Researcher, any risk debator, `analyst_execution.py`, `propagation.py`, `_log_state` (Phase 8's job), KeyVolume/Liquidity Sweep Agent's own code, or anything in Backtest-Trading-Lab.
+
+Test:
+- ✅ Structural: "Final Advisor" node present in every configuration tried (no way to disable it).
+- ✅ `write_report_tree` (no LLM): all three optional sections (VI/VII/VIII) render together correctly when present; re-ran `tests/test_reporting.py`'s own fixture manually (pytest still not installed in this venv) and confirmed the 5 original sections plus the "no section VIII when the field is absent" case both still hold exactly.
+- ✅ Full pipeline, 5 live runs (memory test), covering every case asked for: both KeyVolume+Liquidity Sweep ON with real data (BTCUSDT, 90.1s) -> synthesized both signals + PM decision into Overweight/high, disclaimer present. Only KeyVolume ON but no export exists (LINKUSDT, 49.6s) -> `final_advisory_report` explicitly said "Both the KeyVolume signal and the Liquidity Sweep were unavailable" (correctly treating no_data and disabled-toggle as equally "unavailable," never fabricating a value for either). Only Liquidity Sweep ON with real data (DOGEUSDT, 51.8s) -> explicitly noted "the KeyVolume signal was disabled for this run," reasoned through a genuine conflict (bullish sweep vs. Underweight PM decision) by deferring to PM's judgment rather than overriding it. Both OFF (AVAXUSDT, 82.4s) -> explicitly noted "Both ... were not enabled for this run," relied solely on `final_trade_decision`. Both ON but both missing data (DOTUSDT, 47.9s) -> explicitly noted both returned `no_data`. All 5 runs produced a normal `final_advisory_report` with the disclaimer line, none crashed, `final_trade_decision` behavior unchanged throughout.
+
+Memory path used this session:
+- `~/.tradingagents/memory/test_memory.md` (via `TRADINGAGENTS_MEMORY_LOG_PATH`), for the 5 live pipeline runs (BTCUSDT, LINKUSDT, DOGEUSDT, AVAXUSDT, DOTUSDT). `test_memory.md` now has 18 pending entries total; `trading_memory.md` (real memory) still does not exist.
+
+Commit:
+- docs: design final advisor node
+- feat: add final advisor node
+- docs: record phase 7 test results
+
+Next:
+- Phase 8 — Decision Log & Backtest Evidence: extend `_log_state` to include `keyvolume_report`/`liquidity_sweep_report`/`final_advisory_report` (backward-compatible), then a simple backtest-evidence script. Not started.
