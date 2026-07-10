@@ -1,0 +1,2 @@
+id,line_id,line_price,keyvolume_final_score,keyvolume_status,direction,sweep_strength,sweep_depth,rejection_strength,index,time
+1,2,64110.9125,60.06777399635364,confirmed,buy,38.842159683969925,0.3182007183988402,0.3083436993347183,190,2026-06-17 22:00:00
