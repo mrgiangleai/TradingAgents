@@ -546,3 +546,86 @@ graph.propagate("BTC-USD", "2026-07-09", asset_type="crypto")
 - [x] Không sửa logic agent (`keyvolume_agent.py`/`liquidity_sweep_agent.py`/`final_advisor.py` — không file nào trong số này bị đụng).
 - [x] Không sửa Backtest-Trading-Lab.
 - [x] Test CLI thật (qua đúng luồng `propagate()` CLI dùng) với BTC-USD/2026-07-09 — loader đọc đúng `BTCUSDT_2026-07-09.csv`, xác nhận bằng dữ liệu thật trong report.
+
+---
+
+## Quick Test mode — chế độ dev/debug (không nằm trong ROADMAP.md gốc, xem CHANGELOG_CUSTOM.md)
+
+**Ngày chạy:** 2026-07-10
+**Memory path dùng:** `~/.tradingagents/memory/test_memory.md` (Quy tắc 1)
+
+### Thiết kế (chi tiết đầy đủ ở `docs/agents/quick_test_design.md`)
+
+Graph mới, hoàn toàn tách biệt: `START -> [KeyVolume Agent nếu bật] -> [Liquidity Sweep Agent nếu bật] -> Final Advisor -> END`. `GraphSetup.setup_graph(quick_test_mode=True)` early-return sang `_setup_quick_test_graph()` — nhánh Full Analysis (else) không đổi 1 dòng nào.
+
+**File bị sửa:**
+
+| File | Thay đổi |
+|---|---|
+| `default_config.py` | Cờ `quick_test_mode` (default `False`) + env override. |
+| `graph/setup.py` | `setup_graph(quick_test_mode=False)` early-return; `_setup_quick_test_graph()` mới (graph 1-3 node). |
+| `graph/trading_graph.py` | `__init__` đọc cờ + truyền vào `setup_graph`; `_run_signature` thêm `quick_test=`; `propagate()` bỏ qua `_resolve_pending_entries` (tránh gọi Reflector = thêm 1 LLM call) khi quick test; `_run_graph` rẽ nhánh: quick test → `_log_state_quick_test` (file riêng `quick_test_log_{date}.json`, không đụng `full_states_log_*.json`) + bỏ qua `memory_log.store_decision` + parse rating từ `final_advisory_report` thay vì `final_trade_decision`. |
+| `agents/managers/final_advisor.py` | `state["final_trade_decision"]` → `state.get(...)` + placeholder rõ ràng khi vắng mặt (Quick Test không có Portfolio Manager); thêm `quick_test_mode` param chỉ đổi 1 dòng hướng dẫn "ngắn gọn" trong prompt — schema/disclaimer không đổi. |
+| `cli/utils.py` | `select_analysis_mode()` (Full Analysis / Quick Test). |
+| `cli/main.py` | Step 0 (Analysis Mode) trước Step 1; bỏ qua Step 4 (analyst)/Step 5 (research depth) khi Quick Test; `get_user_selections()` gọi 1 lần trong `analyze()`, dispatch sang `run_analysis(selections, checkpoint)` (chữ ký đổi nhận `selections` làm tham số, thân hàm giữ nguyên) hoặc `run_quick_test(selections)` (hàm mới, không dùng `Live` layout/`AnalystWallTimeTracker` — không khớp graph 1-3 node). |
+
+**Không sửa:** `reporting.py`, `display_complete_report()` (đã đủ `.get()` guard từ Phase 7/UX-fix, tự động chỉ hiện VI/VII/VIII), `analyst_execution.py`, bất kỳ analyst/researcher/risk-debator/portfolio-manager file nào, Backtest-Trading-Lab.
+
+### Test 1 — Cấu trúc graph (không tốn API)
+
+| Cấu hình | Node | Số node |
+|---|---|---|
+| Full Analysis, mặc định | Market/Sentiment/News/Fundamentals Analyst, Bull/Bear, Research Manager, Trader, Aggressive/Conservative/Neutral, Portfolio Manager, Final Advisor + 4 Msg-Clear + 4 tools | 21 (y hệt trước khi thêm Quick Test) |
+| Quick Test, cả 2 tín hiệu ON | `KeyVolume Agent`, `Liquidity Sweep Agent`, `Final Advisor` | 3 |
+
+### Test 2 — Quick Test thật: BTC-USD / 2026-07-09 / KeyVolume ON / Liquidity Sweep ON
+
+```python
+config["quick_test_mode"] = True
+config["enable_keyvolume_agent"] = True
+config["enable_liquidity_sweep_agent"] = True
+graph.propagate("BTC-USD", "2026-07-09", asset_type="crypto")
+```
+
+- ✅ Không crash. `keyvolume_report`/`liquidity_sweep_report` đọc đúng dữ liệu thật từ `BTCUSDT_2026-07-09.csv` (qua `to_research_platform_symbol`, không đổi từ phiên UX-fix).
+- ✅ `final_advisory_report` sinh ra đầy đủ (Recommendation/Confidence/rationale/disclaimer), rationale **ngắn gọn 2 câu** (đúng yêu cầu 5 — nhờ `brevity_note` khi `quick_test_mode=True`), tổng hợp đúng 2 tín hiệu xung đột (bearish KeyVolume mạnh vs bullish Liquidity Sweep yếu) → `Underweight`/medium.
+- ✅ `final_trade_decision` **không tồn tại** trong `final_state` (đúng thiết kế — Portfolio Manager không chạy); `market_report` vẫn tồn tại dạng `""` (khởi tạo sẵn, không lỗi).
+- ✅ `quick_test_log_2026-07-09.json` ghi riêng, không đụng `full_states_log_2026-07-09.json`.
+- ✅ Report hiển thị (`display_complete_report`) **chỉ** Section VI/VII/VIII — không có I-V, xác nhận qua `Console(record=True)`.
+- ✅ Memory: chạy Quick Test lần 2 với ticker hoàn toàn mới (`SHIBUSDT`, chưa từng dùng) → tổng entry `test_memory.md` **không đổi** (19 → 19) — xác nhận `memory_log.store_decision` bị bỏ qua hoàn toàn trong Quick Test (khác Full Analysis, luôn ghi). `SHIBUSDT` cũng test được case thiếu dữ liệu (`no_data`) + yfinance 404 (ticker không tồn tại) đồng thời — không crash ở cả 2 lỗi cùng lúc.
+
+### Test 3 — So sánh Wall time / LLM calls / Token usage với Full Analysis (cùng ticker/ngày/cờ)
+
+Chạy `TradingAgentsGraph(callbacks=[StatsCallbackHandler()])`, cùng `BTC-USD`/`2026-07-09`, cùng `enable_keyvolume_agent=True`/`enable_liquidity_sweep_agent=True`, chỉ khác `quick_test_mode`:
+
+| Metric | Quick Test | Full Analysis | Tỉ lệ giảm |
+|---|---|---|---|
+| Wall time | **5.0s** | 61.6s | **~12.3x** |
+| LLM calls | **3** | 21 | **~7x** |
+| Tokens in | **1,771** | 62,271 | **~35x** |
+| Tokens out | **278** | 7,361 | **~26x** |
+| Quyết định | Underweight | Overweight | (khác nhau — dự kiến, Quick Test không có ý kiến 4 analyst/debate/risk, chỉ dựa 2 tín hiệu bổ sung) |
+
+→ Đạt đúng mục tiêu "giảm tối đa số lần gọi LLM": 3 call cố định tối đa (1/agent bật + 1 Final Advisor), so với tối thiểu 12+ call của Full Analysis (chưa tính vòng lặp tool-call/debate nhiều vòng có thể đẩy con số lên cao hơn nữa).
+
+### Test 4 — Full Analysis không đổi hành vi (regression)
+
+- ✅ Cấu trúc graph mặc định: 21 node, đúng tên, đúng thứ tự — y hệt trước khi thêm Quick Test (Test 1).
+- ✅ Chạy Full Analysis thật (BTC-USD/2026-07-09, cùng cấu hình so sánh ở Test 3) — không crash, `final_trade_decision`/`final_advisory_report` sinh ra bình thường, format y hệt các phiên trước (Phase 5.3-7).
+
+### Kiểm chứng cách ly memory (Quy tắc 1)
+
+- ✅ `test_memory.md`: Quick Test (2 lần chạy, kể cả ticker mới `SHIBUSDT`) **không thêm entry nào**. Full Analysis (1 lần chạy) tương tác với entry pending có sẵn của cùng ticker+date (hành vi `TradingMemoryLog` có sẵn, không đổi bởi phiên này).
+- ✅ `trading_memory.md` (memory thật) — vẫn không tồn tại.
+
+### Điều kiện hoàn thành Quick Test mode
+
+- [x] Thêm lựa chọn Full Analysis (mặc định)/Quick Test ở CLI.
+- [x] Quick Test chỉ chạy KeyVolume Agent, Liquidity Sweep Agent, Final Advisor — xác nhận qua cấu trúc graph (3 node).
+- [x] Không chạy Analyst Team/Debate/Research Manager/Trader/Risk Debate/Portfolio Manager — xác nhận `final_trade_decision` vắng mặt trong state.
+- [x] Đọc dữ liệu qua adapter hiện có (`load_keyvolume_data`/`load_liquidity_sweep_data`), không gọi trực tiếp engine Backtest-Trading-Lab.
+- [x] Final Advisor sinh report đầy đủ nhưng ngắn gọn.
+- [x] Full Analysis giữ nguyên hành vi (Test 1 + Test 4).
+- [x] Test đúng kịch bản yêu cầu: BTC-USD/2026-07-09/KeyVolume ON/Liquidity Sweep ON — chạy thành công, không crash, report hợp lệ.
+- [x] Đo và so sánh Wall time/LLM calls/Token usage với Full Analysis — Test 3.
+- [x] Ghi nhận vào `CHANGELOG_CUSTOM.md` (không nằm trong ROADMAP.md gốc đã khoá).
