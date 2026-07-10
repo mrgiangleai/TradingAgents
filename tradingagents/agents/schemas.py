@@ -339,3 +339,65 @@ def render_sentiment_report(report: SentimentReport) -> str:
         "",
         report.narrative,
     ])
+
+
+# ---------------------------------------------------------------------------
+# KeyVolume Agent (Phase 5, standalone -- not yet wired into the graph)
+# ---------------------------------------------------------------------------
+
+
+class KeyVolumeSignal(str, Enum):
+    """Direction read from KeyVolume line structure ("Market Memory" strength),
+    not a price forecast -- see docs/agents/keyvolume_agent_design.md section 5.
+
+    Deliberately excludes "no_data": that case short-circuits before any LLM
+    call (see keyvolume_agent.py), so the model is never asked to produce it.
+    """
+
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    NEUTRAL = "neutral"
+
+
+class KeyVolumeReport(BaseModel):
+    """Structured output produced by the KeyVolume Agent for one symbol/date.
+
+    Only produced when static export data is available (Quy tac 4 -- see
+    keyvolume_agent.py's no-data short-circuit for the other case).
+    """
+
+    signal: KeyVolumeSignal = Field(
+        description=(
+            "Read on KeyVolume line structure. bullish = the strongest "
+            "(highest final_score) lines are still active/confirmed (structure "
+            "intact); bearish = the strongest lines were recently invalidated "
+            "with reason 'broken' (structure gave way); neutral = mixed, "
+            "uniformly weak final_score, or zero lines detected."
+        ),
+    )
+    confidence: Literal["low", "medium", "high"] = Field(
+        description=(
+            "Confidence in the signal. 'low' when zero lines were detected or "
+            "final_score values are weak/mixed across lines; 'medium' when a "
+            "moderately clear pattern exists among a small number of lines; "
+            "'high' only when several lines agree and final_score is high."
+        ),
+    )
+    evidence: str = Field(
+        description=(
+            "1-3 sentences citing specific line(s) by price/status/final_score "
+            "that justify the signal. Do not describe lines not present in the "
+            "data, and do not speculate about price direction beyond what the "
+            "line structure itself shows."
+        ),
+    )
+
+
+def render_keyvolume_report(report: KeyVolumeReport) -> str:
+    """Render a KeyVolumeReport to the same markdown shape used elsewhere."""
+    return "\n".join([
+        f"**Signal:** {report.signal.value}",
+        f"**Confidence:** {report.confidence}",
+        "",
+        report.evidence,
+    ])
