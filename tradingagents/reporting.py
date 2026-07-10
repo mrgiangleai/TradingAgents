@@ -104,6 +104,14 @@ def write_report_tree(final_state: dict, ticker: str, save_path) -> Path:
         (keyvolume_dir / "keyvolume.md").write_text(final_state["keyvolume_report"], encoding="utf-8")
         sections.append(f"## VI. KeyVolume Signal (supplementary)\n\n{final_state['keyvolume_report']}")
 
+    # 7. Liquidity Sweep Signal (Phase 6, supplementary -- opt-in, off by
+    # default; same absent-key-when-disabled pattern as KeyVolume above).
+    if final_state.get("liquidity_sweep_report"):
+        liquidity_dir = save_path / "7_liquidity_sweep"
+        liquidity_dir.mkdir(exist_ok=True)
+        (liquidity_dir / "liquidity_sweep.md").write_text(final_state["liquidity_sweep_report"], encoding="utf-8")
+        sections.append(f"## VII. Liquidity Sweep Signal (supplementary)\n\n{final_state['liquidity_sweep_report']}")
+
     # Write consolidated report
     header = f"# Trading Analysis Report: {ticker}\n\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
     (save_path / "complete_report.md").write_text(header + "\n\n".join(sections), encoding="utf-8")

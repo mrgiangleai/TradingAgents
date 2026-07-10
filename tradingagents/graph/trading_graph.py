@@ -162,14 +162,19 @@ class TradingAgentsGraph:
         # selection is invalidated instead of silently resumed (#1089).
         self.selected_analysts = filtered_analysts
 
-        # KeyVolume Agent toggle (Phase 5.3, opt-in supplementary signal, off
-        # by default). Same single-file-build-logic rule as the analyst
-        # toggles above: this flag only ever gets read here, in setup.py
-        # (graph build), and in _run_signature below.
+        # Supplementary signal agent toggles (Phase 5.3/6.3, opt-in, off by
+        # default). Same single-file-build-logic rule as the analyst toggles
+        # above: each flag only ever gets read here, in setup.py (graph
+        # build), and in _run_signature below.
         self.enable_keyvolume = self.config.get("enable_keyvolume_agent", False)
+        self.enable_liquidity_sweep = self.config.get("enable_liquidity_sweep_agent", False)
 
         # Set up the graph: keep the workflow for recompilation with a checkpointer.
-        self.workflow = self.graph_setup.setup_graph(filtered_analysts, enable_keyvolume=self.enable_keyvolume)
+        self.workflow = self.graph_setup.setup_graph(
+            filtered_analysts,
+            enable_keyvolume=self.enable_keyvolume,
+            enable_liquidity_sweep=self.enable_liquidity_sweep,
+        )
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
@@ -378,6 +383,7 @@ class TradingAgentsGraph:
         return "|".join([
             "analysts=" + ",".join(self.selected_analysts),
             f"keyvolume={self.enable_keyvolume}",
+            f"liquidity_sweep={self.enable_liquidity_sweep}",
             f"debate={self.config['max_debate_rounds']}",
             f"risk={self.config['max_risk_discuss_rounds']}",
             f"asset={asset_type}",

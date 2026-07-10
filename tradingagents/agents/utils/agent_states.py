@@ -60,10 +60,12 @@ class AgentState(MessagesState):
     ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
 
-    # optional supplementary signal (Phase 5, off by default -- see
-    # docs/agents/keyvolume_agent_design.md). Absent from state entirely when
-    # disabled, same pattern as the 4 analyst reports being toggled off.
+    # optional supplementary signals (Phase 5/6, off by default -- see
+    # docs/agents/keyvolume_agent_design.md /
+    # docs/agents/liquidity_sweep_agent_design.md). Absent from state entirely
+    # when disabled, same pattern as the 4 analyst reports being toggled off.
     keyvolume_report: Annotated[str, "Structured KeyVolume signal from static Backtest-Trading-Lab export"]
+    liquidity_sweep_report: Annotated[str, "Structured Liquidity Sweep signal from static Backtest-Trading-Lab export"]
 
     # researcher team discussion step
     investment_debate_state: Annotated[

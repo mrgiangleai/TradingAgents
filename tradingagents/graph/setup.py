@@ -21,6 +21,7 @@ from tradingagents.agents import (
     create_trader,
 )
 from tradingagents.agents.signals.keyvolume_agent import create_keyvolume_agent_node
+from tradingagents.agents.signals.liquidity_sweep_agent import create_liquidity_sweep_agent_node
 from tradingagents.agents.utils.agent_states import AgentState
 
 from .analyst_execution import build_analyst_execution_plan
@@ -63,6 +64,7 @@ class GraphSetup:
         self,
         selected_analysts=("market", "social", "news", "fundamentals"),
         enable_keyvolume: bool = False,
+        enable_liquidity_sweep: bool = False,
     ):
         """Set up and compile the agent workflow graph.
 
@@ -73,10 +75,14 @@ class GraphSetup:
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
             enable_keyvolume (bool): Whether to include the KeyVolume Agent
-                (Phase 5, supplementary signal, off by default). When False the
-                graph is shaped exactly as it was before Phase 5.3 -- no
-                "KeyVolume Agent" node, no keyvolume_report state field ever
-                gets written.
+                (Phase 5, supplementary signal, off by default).
+            enable_liquidity_sweep (bool): Whether to include the Liquidity
+                Sweep Agent (Phase 6, supplementary signal, off by default).
+            Both flags default False, in which case the graph is shaped
+            exactly as it was before Phase 5.3/6.3 -- no supplementary node,
+            no extra state field ever gets written. Each enabled independently
+            of the other; both can be on at once (see "supplementary_nodes"
+            below).
         """
         plan = build_analyst_execution_plan(selected_analysts)
 
@@ -118,20 +124,27 @@ class GraphSetup:
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
-        # KeyVolume Agent (Phase 5.3, opt-in): runs once, before the analyst
-        # chain, writing only "keyvolume_report" -- no other node reads it yet
-        # (Phase 7 Final Advisor will), so it cannot affect any existing
-        # decision path either way.
+        # Supplementary signal agents (Phase 5.3/6.3, opt-in): each writes only
+        # its own report field -- no other node reads either one yet (Phase 7
+        # Final Advisor will), so enabling any subset cannot affect any
+        # existing decision path. Chained in a fixed order before the first
+        # analyst; each flag adds/removes exactly its own node independently.
+        supplementary_nodes = []
         if enable_keyvolume:
             workflow.add_node("KeyVolume Agent", create_keyvolume_agent_node(self.quick_thinking_llm))
+            supplementary_nodes.append("KeyVolume Agent")
+        if enable_liquidity_sweep:
+            workflow.add_node("Liquidity Sweep Agent", create_liquidity_sweep_agent_node(self.quick_thinking_llm))
+            supplementary_nodes.append("Liquidity Sweep Agent")
 
         # Define edges
-        # Start with the first analyst -- KeyVolume Agent runs first if enabled.
-        if enable_keyvolume:
-            workflow.add_edge(START, "KeyVolume Agent")
-            workflow.add_edge("KeyVolume Agent", plan.specs[0].agent_node)
-        else:
-            workflow.add_edge(START, plan.specs[0].agent_node)
+        # Start with the first analyst -- any enabled supplementary agents run
+        # first, in the order above. With both off, this is a single edge
+        # START -> first analyst, identical to before Phase 5.3.
+        chain = [*supplementary_nodes, plan.specs[0].agent_node]
+        workflow.add_edge(START, chain[0])
+        for src, dst in zip(chain, chain[1:]):
+            workflow.add_edge(src, dst)
 
         # Connect analysts in sequence
         for i, spec in enumerate(plan.specs):

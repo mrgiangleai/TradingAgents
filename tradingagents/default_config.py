@@ -35,6 +35,9 @@ _ENV_OVERRIDES = {
     # signal, not one of the 4 core analysts). See
     # docs/agents/keyvolume_agent_design.md.
     "TRADINGAGENTS_ENABLE_KEYVOLUME_AGENT": "enable_keyvolume_agent",
+    # Liquidity Sweep Agent toggle (Phase 6.3, off by default -- opt-in
+    # supplementary signal). See docs/agents/liquidity_sweep_agent_design.md.
+    "TRADINGAGENTS_ENABLE_LIQUIDITY_SWEEP_AGENT": "enable_liquidity_sweep_agent",
 }
 
 
@@ -141,6 +144,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # not one of the 4 core analysts -- existing pipelines are unaffected
     # until a user explicitly turns this on.
     "enable_keyvolume_agent": False,
+    # Off by default, same reasoning as enable_keyvolume_agent above.
+    "enable_liquidity_sweep_agent": False,
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",
