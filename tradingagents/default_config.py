@@ -77,6 +77,15 @@ def _apply_env_overrides(config: dict) -> dict:
 DEFAULT_CONFIG = _apply_env_overrides({
     "project_dir": os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
     "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR", os.path.join(_TRADINGAGENTS_HOME, "logs")),
+    # Static KeyVolume export directory (Phase 4). Repo-relative by default
+    # (data/keyvolume/, one level above tradingagents/) -- distinct from
+    # data_cache_dir below, which is vendor-fetch cache under ~/.tradingagents.
+    # Populated offline by scripts/keyvolume_export.py; never written to by
+    # the graph itself. See docs/data/keyvolume_data_format.md.
+    "keyvolume_data_dir": os.getenv(
+        "TRADINGAGENTS_KEYVOLUME_DATA_DIR",
+        os.path.join(os.path.dirname(os.path.abspath(os.path.join(os.path.dirname(__file__), "."))), "data", "keyvolume"),
+    ),
     "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR", os.path.join(_TRADINGAGENTS_HOME, "cache")),
     "memory_log_path": os.getenv("TRADINGAGENTS_MEMORY_LOG_PATH", os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md")),
     # Optional cap on the number of resolved memory log entries. When set,
