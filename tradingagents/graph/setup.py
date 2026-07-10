@@ -10,6 +10,7 @@ from tradingagents.agents import (
     create_bear_researcher,
     create_bull_researcher,
     create_conservative_debator,
+    create_final_advisor,
     create_fundamentals_analyst,
     create_market_analyst,
     create_msg_delete,
@@ -104,6 +105,7 @@ class GraphSetup:
         neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
         conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
         portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
+        final_advisor_node = create_final_advisor(self.deep_thinking_llm)
 
         # Create workflow
         workflow = StateGraph(AgentState)
@@ -123,6 +125,7 @@ class GraphSetup:
         workflow.add_node("Neutral Analyst", neutral_analyst)
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
+        workflow.add_node("Final Advisor", final_advisor_node)
 
         # Supplementary signal agents (Phase 5.3/6.3, opt-in): each writes only
         # its own report field -- no other node reads either one yet (Phase 7
@@ -183,6 +186,12 @@ class GraphSetup:
                 RISK_ANALYSIS_PATH_MAP,
             )
 
-        workflow.add_edge("Portfolio Manager", END)
+        # Final Advisor (Phase 7, additive, always on -- no toggle of its own):
+        # runs after Portfolio Manager, reads final_trade_decision + whichever
+        # supplementary signals are present, writes only final_advisory_report.
+        # Does not replace Portfolio Manager or touch final_trade_decision --
+        # see docs/agents/final_advisor_design.md section 1.
+        workflow.add_edge("Portfolio Manager", "Final Advisor")
+        workflow.add_edge("Final Advisor", END)
 
         return workflow

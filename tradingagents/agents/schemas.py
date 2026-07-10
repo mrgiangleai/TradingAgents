@@ -474,3 +474,63 @@ def render_liquidity_sweep_report(report: LiquiditySweepReport) -> str:
         "",
         report.evidence,
     ])
+
+
+# ---------------------------------------------------------------------------
+# Final Advisor (Phase 7 -- additive, runs after Portfolio Manager, does not
+# replace it. See docs/agents/final_advisor_design.md.)
+# ---------------------------------------------------------------------------
+
+
+class FinalAdvisoryReport(BaseModel):
+    """Structured output produced by the Final Advisor.
+
+    Synthesizes the Portfolio Manager's decision (which already encapsulates
+    the full analyst/debate/risk chain) with the two optional supplementary
+    signals (KeyVolume, Liquidity Sweep) into one final advisory read.
+    Reuses ``PortfolioRating`` rather than a new enum, so the whole system
+    keeps a single rating scale end to end.
+    """
+
+    recommendation: PortfolioRating = Field(
+        description=(
+            "Final synthesized recommendation. Exactly one of Buy / Overweight / "
+            "Hold / Underweight / Sell, informed by the Portfolio Manager's "
+            "decision plus whichever of KeyVolume/Liquidity Sweep are available."
+        ),
+    )
+    rationale: str = Field(
+        description=(
+            "2-4 sentences explaining the recommendation. Must explicitly state "
+            "which supplementary signals (KeyVolume, Liquidity Sweep) were "
+            "available, disabled, or missing data -- never invent a value for "
+            "one that was disabled or reported no_data; just note it as "
+            "unavailable and reason from what IS available."
+        ),
+    )
+    confidence: Literal["low", "medium", "high"] = Field(
+        description=(
+            "Overall confidence in this final recommendation. Should generally "
+            "not exceed the Portfolio Manager's own conviction when supplementary "
+            "signals are absent or no_data; may be raised when multiple "
+            "independent signals agree, or lowered when they conflict."
+        ),
+    )
+
+
+def render_final_advisory_report(report: FinalAdvisoryReport) -> str:
+    """Render a FinalAdvisoryReport to markdown.
+
+    Deliberately does NOT include the advisory-only disclaimer here --
+    ``invoke_structured_or_freetext``'s free-text fallback path returns
+    ``response.content`` directly, bypassing this render function entirely,
+    so a disclaimer added only here would not be guaranteed present in that
+    path. ``final_advisor.py`` appends it unconditionally after calling this,
+    covering both paths (Quy tac 3).
+    """
+    return "\n".join([
+        f"**Recommendation:** {report.recommendation.value}",
+        f"**Confidence:** {report.confidence}",
+        "",
+        report.rationale,
+    ])

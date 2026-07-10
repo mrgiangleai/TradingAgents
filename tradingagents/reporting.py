@@ -112,6 +112,15 @@ def write_report_tree(final_state: dict, ticker: str, save_path) -> Path:
         (liquidity_dir / "liquidity_sweep.md").write_text(final_state["liquidity_sweep_report"], encoding="utf-8")
         sections.append(f"## VII. Liquidity Sweep Signal (supplementary)\n\n{final_state['liquidity_sweep_report']}")
 
+    # 8. Final Advisor (Phase 7, additive -- always runs, no toggle of its
+    # own; synthesizes final_trade_decision + whichever of section VI/VII
+    # are present. Does not replace section V.)
+    if final_state.get("final_advisory_report"):
+        advisor_dir = save_path / "8_final_advisor"
+        advisor_dir.mkdir(exist_ok=True)
+        (advisor_dir / "final_advisor.md").write_text(final_state["final_advisory_report"], encoding="utf-8")
+        sections.append(f"## VIII. Final Advisor (Advisory Only)\n\n{final_state['final_advisory_report']}")
+
     # Write consolidated report
     header = f"# Trading Analysis Report: {ticker}\n\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
     (save_path / "complete_report.md").write_text(header + "\n\n".join(sections), encoding="utf-8")
