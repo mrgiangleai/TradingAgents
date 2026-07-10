@@ -95,6 +95,15 @@ def write_report_tree(final_state: dict, ticker: str, save_path) -> Path:
             (portfolio_dir / "decision.md").write_text(risk["judge_decision"], encoding="utf-8")
             sections.append(f"## V. Portfolio Manager Decision\n\n### Portfolio Manager\n{risk['judge_decision']}")
 
+    # 6. KeyVolume Signal (Phase 5, supplementary -- opt-in, off by default;
+    # key is absent from final_state entirely when disabled, same as any
+    # other node that never ran).
+    if final_state.get("keyvolume_report"):
+        keyvolume_dir = save_path / "6_keyvolume"
+        keyvolume_dir.mkdir(exist_ok=True)
+        (keyvolume_dir / "keyvolume.md").write_text(final_state["keyvolume_report"], encoding="utf-8")
+        sections.append(f"## VI. KeyVolume Signal (supplementary)\n\n{final_state['keyvolume_report']}")
+
     # Write consolidated report
     header = f"# Trading Analysis Report: {ticker}\n\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
     (save_path / "complete_report.md").write_text(header + "\n\n".join(sections), encoding="utf-8")

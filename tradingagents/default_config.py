@@ -31,6 +31,10 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_ENABLE_SENTIMENT_ANALYST": "enable_sentiment_analyst",
     "TRADINGAGENTS_ENABLE_NEWS_ANALYST":      "enable_news_analyst",
     "TRADINGAGENTS_ENABLE_FUNDAMENTALS_ANALYST": "enable_fundamentals_analyst",
+    # KeyVolume Agent toggle (Phase 5.3, off by default -- opt-in supplementary
+    # signal, not one of the 4 core analysts). See
+    # docs/agents/keyvolume_agent_design.md.
+    "TRADINGAGENTS_ENABLE_KEYVOLUME_AGENT": "enable_keyvolume_agent",
 }
 
 
@@ -126,6 +130,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "enable_sentiment_analyst": True,
     "enable_news_analyst": True,
     "enable_fundamentals_analyst": True,
+    # Off by default: KeyVolume is an opt-in supplementary signal (Phase 5),
+    # not one of the 4 core analysts -- existing pipelines are unaffected
+    # until a user explicitly turns this on.
+    "enable_keyvolume_agent": False,
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",

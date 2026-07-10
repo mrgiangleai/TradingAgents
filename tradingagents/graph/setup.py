@@ -20,6 +20,7 @@ from tradingagents.agents import (
     create_sentiment_analyst,
     create_trader,
 )
+from tradingagents.agents.signals.keyvolume_agent import create_keyvolume_agent_node
 from tradingagents.agents.utils.agent_states import AgentState
 
 from .analyst_execution import build_analyst_execution_plan
@@ -59,7 +60,9 @@ class GraphSetup:
         self.conditional_logic = conditional_logic
 
     def setup_graph(
-        self, selected_analysts=("market", "social", "news", "fundamentals")
+        self,
+        selected_analysts=("market", "social", "news", "fundamentals"),
+        enable_keyvolume: bool = False,
     ):
         """Set up and compile the agent workflow graph.
 
@@ -69,6 +72,11 @@ class GraphSetup:
                 - "social": Social media analyst
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
+            enable_keyvolume (bool): Whether to include the KeyVolume Agent
+                (Phase 5, supplementary signal, off by default). When False the
+                graph is shaped exactly as it was before Phase 5.3 -- no
+                "KeyVolume Agent" node, no keyvolume_report state field ever
+                gets written.
         """
         plan = build_analyst_execution_plan(selected_analysts)
 
@@ -110,9 +118,20 @@ class GraphSetup:
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
+        # KeyVolume Agent (Phase 5.3, opt-in): runs once, before the analyst
+        # chain, writing only "keyvolume_report" -- no other node reads it yet
+        # (Phase 7 Final Advisor will), so it cannot affect any existing
+        # decision path either way.
+        if enable_keyvolume:
+            workflow.add_node("KeyVolume Agent", create_keyvolume_agent_node(self.quick_thinking_llm))
+
         # Define edges
-        # Start with the first analyst
-        workflow.add_edge(START, plan.specs[0].agent_node)
+        # Start with the first analyst -- KeyVolume Agent runs first if enabled.
+        if enable_keyvolume:
+            workflow.add_edge(START, "KeyVolume Agent")
+            workflow.add_edge("KeyVolume Agent", plan.specs[0].agent_node)
+        else:
+            workflow.add_edge(START, plan.specs[0].agent_node)
 
         # Connect analysts in sequence
         for i, spec in enumerate(plan.specs):

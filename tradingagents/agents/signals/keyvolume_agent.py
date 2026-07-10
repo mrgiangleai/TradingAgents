@@ -1,9 +1,12 @@
-"""KeyVolume Agent (Phase 5.1/5.2a/5.2b) -- standalone, not yet a graph node.
+"""KeyVolume Agent (Phase 5.1/5.2a/5.2b/5.3).
 
 See docs/agents/keyvolume_agent_design.md for the full design rationale
 (field selection, no-data short-circuit, what bullish/bearish/neutral mean
-for a KeyVolume line). Not wired into setup.py/AgentState -- that is
-Phase 5.3, out of scope here.
+for a KeyVolume line). ``create_keyvolume_agent`` is the standalone
+``(symbol, date) -> KeyVolumeResult`` function from Phase 5.1/5.2;
+``create_keyvolume_agent_node`` (Phase 5.3) is a thin wrapper turning it
+into a ``state -> dict`` LangGraph node, added conditionally in
+``graph/setup.py`` behind the ``enable_keyvolume_agent`` config flag.
 """
 
 from __future__ import annotations
@@ -111,3 +114,33 @@ Read the overall structural picture: is the strongest structure currently holdin
         )
 
     return run
+
+
+def render_keyvolume_result(result: KeyVolumeResult) -> str:
+    """Render a KeyVolumeResult to the markdown shape used for state/report display."""
+    if result.signal == "no_data":
+        return f"**Signal:** no_data\n\n{result.evidence}"
+    return "\n".join([
+        f"**Signal:** {result.signal}",
+        f"**Confidence:** {result.confidence}",
+        "",
+        result.evidence,
+    ])
+
+
+def create_keyvolume_agent_node(llm):
+    """Return a LangGraph node: ``state -> {"keyvolume_report": <markdown>}``.
+
+    Reads ``company_of_interest``/``trade_date`` already in ``AgentState``
+    (same fields every analyst reads) -- no new state input required.
+    Never raises: a missing export or a disabled toggle both resolve to a
+    normal (if uninformative) report string, never a crashed node.
+    """
+
+    agent = create_keyvolume_agent(llm)
+
+    def keyvolume_node(state) -> dict:
+        result = agent(state["company_of_interest"], state["trade_date"])
+        return {"keyvolume_report": render_keyvolume_result(result)}
+
+    return keyvolume_node
