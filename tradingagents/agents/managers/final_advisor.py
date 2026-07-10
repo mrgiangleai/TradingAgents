@@ -6,6 +6,11 @@ docs/agents/final_advisor_design.md section 1 for the full rationale.
 Runs unconditionally (no enable/disable flag of its own), after Portfolio
 Manager, writing only "final_advisory_report" -- final_trade_decision and
 everything memory_log/SignalProcessor/_log_state read are untouched.
+
+Also the one node reused as-is in Quick Test mode (see
+docs/agents/quick_test_design.md), where there is no Portfolio Manager
+decision to read -- ``quick_test_mode`` below covers that case explicitly
+rather than relying on ``final_trade_decision`` simply being an empty string.
 """
 
 from __future__ import annotations
@@ -21,6 +26,11 @@ from tradingagents.agents.utils.structured import (
 )
 
 _NOT_ENABLED = "Not enabled for this run."
+_NO_PORTFOLIO_MANAGER = (
+    "Not available -- Quick Test mode skips the full analyst/debate/research/"
+    "trader/risk/portfolio chain entirely, so there is no Portfolio Manager "
+    "decision this run."
+)
 
 
 def _supplementary_text(state, key: str) -> str:
@@ -30,14 +40,28 @@ def _supplementary_text(state, key: str) -> str:
     return state.get(key) or _NOT_ENABLED
 
 
-def create_final_advisor(llm):
+def create_final_advisor(llm, quick_test_mode: bool = False):
+    """``quick_test_mode`` only changes the prompt (missing-PM-decision
+    framing + a brevity instruction) -- the schema, structured-output
+    mechanism, and disclaimer are identical in both modes."""
+
     structured_llm = bind_structured(llm, FinalAdvisoryReport, "Final Advisor")
 
     def final_advisor_node(state) -> dict:
         instrument_context = get_instrument_context_from_state(state)
-        final_trade_decision = state["final_trade_decision"]
+        # Quick Test mode never runs Portfolio Manager, so the key is simply
+        # absent from state -- same "absent means didn't run" convention as
+        # the supplementary signals below, not a special-cased empty string.
+        final_trade_decision = state.get("final_trade_decision") or _NO_PORTFOLIO_MANAGER
         keyvolume_text = _supplementary_text(state, "keyvolume_report")
         liquidity_sweep_text = _supplementary_text(state, "liquidity_sweep_report")
+
+        brevity_note = (
+            "\n\nThis is Quick Test mode (dev/debug) -- keep the rationale short "
+            "(1-2 sentences) and base it only on the KeyVolume/Liquidity Sweep "
+            "signals above; there is no Portfolio Manager decision to weigh in."
+            if quick_test_mode else ""
+        )
 
         prompt = f"""You are the Final Advisor, producing the single last advisory read for this run. This is advisory only -- no trade is ever placed automatically.
 
@@ -56,7 +80,7 @@ def create_final_advisor(llm):
 
 ---
 
-Synthesize these into one final recommendation. If a signal above says "Not enabled for this run" or reports no_data/no data available, explicitly note it as unavailable in your rationale -- do not invent a value for it or guess what it might have shown, and do not let its absence lower your confidence beyond what the available signals actually justify.{get_language_instruction()}"""
+Synthesize these into one final recommendation. If a signal above says "Not enabled for this run" or reports no_data/no data available, explicitly note it as unavailable in your rationale -- do not invent a value for it or guess what it might have shown, and do not let its absence lower your confidence beyond what the available signals actually justify.{brevity_note}{get_language_instruction()}"""
 
         report_text = invoke_structured_or_freetext(
             structured_llm,

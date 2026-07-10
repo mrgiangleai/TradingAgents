@@ -34,6 +34,40 @@ def is_valid_ticker_input(value: str) -> bool:
     return not v or (all(ch.isalnum() or ch in "._-^=" for ch in v) and len(v) <= 32)
 
 
+def select_analysis_mode() -> str:
+    """Select Full Analysis (default) or Quick Test (dev/debug -- see
+    docs/agents/quick_test_design.md). Returns "full" or "quick_test".
+    """
+    choice = questionary.select(
+        "Select analysis mode:",
+        choices=[
+            questionary.Choice(
+                "Full Analysis (default) -- Analyst Team -> Research -> Trader -> Risk -> Portfolio Manager -> Final Advisor",
+                value="full",
+            ),
+            questionary.Choice(
+                "Quick Test (dev/debug) -- KeyVolume + Liquidity Sweep + Final Advisor only, minimizes LLM calls",
+                value="quick_test",
+            ),
+        ],
+        default="Full Analysis (default) -- Analyst Team -> Research -> Trader -> Risk -> Portfolio Manager -> Final Advisor",
+        instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
+        style=questionary.Style(
+            [
+                ("selected", "fg:cyan noinherit"),
+                ("highlighted", "fg:cyan noinherit"),
+                ("pointer", "fg:cyan noinherit"),
+            ]
+        ),
+    ).ask()
+
+    if choice is None:
+        console.print("\n[red]No analysis mode selected. Exiting...[/red]")
+        exit(1)
+
+    return choice
+
+
 def get_ticker() -> str:
     """Prompt the user to enter a ticker symbol, preserving exchange suffixes.
 

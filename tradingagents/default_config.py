@@ -38,6 +38,10 @@ _ENV_OVERRIDES = {
     # Liquidity Sweep Agent toggle (Phase 6.3, off by default -- opt-in
     # supplementary signal). See docs/agents/liquidity_sweep_agent_design.md.
     "TRADINGAGENTS_ENABLE_LIQUIDITY_SWEEP_AGENT": "enable_liquidity_sweep_agent",
+    # Quick Test mode (dev/debug, off by default): skips the entire analyst/
+    # debate/research/trader/risk/portfolio chain, running only KeyVolume/
+    # Liquidity Sweep + Final Advisor. See docs/agents/quick_test_design.md.
+    "TRADINGAGENTS_QUICK_TEST_MODE": "quick_test_mode",
 }
 
 
@@ -146,6 +150,11 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "enable_keyvolume_agent": False,
     # Off by default, same reasoning as enable_keyvolume_agent above.
     "enable_liquidity_sweep_agent": False,
+    # Off by default: Quick Test replaces the entire analyst/debate/research/
+    # trader/risk/portfolio chain with just KeyVolume/Liquidity Sweep + Final
+    # Advisor, for fast/cheap dev iteration. Does not change Full Analysis
+    # (this flag's default) behavior at all -- see docs/agents/quick_test_design.md.
+    "quick_test_mode": False,
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",

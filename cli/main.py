@@ -34,6 +34,7 @@ from cli.utils import (
     get_ticker,
     prompt_openai_compatible_url,
     resolve_backend_url,
+    select_analysis_mode,
     select_analysts,
     select_deep_thinking_agent,
     select_llm_provider,
@@ -533,6 +534,22 @@ def get_user_selections():
         console.print(create_question_box(box_title, box_body))
         return prompt_fn()
 
+    # Step 0: Analysis mode (Quick Test, dev/debug -- see
+    # docs/agents/quick_test_design.md). Skipped when TRADINGAGENTS_QUICK_TEST_MODE
+    # is set, same env-precedence pattern as every other step.
+    if os.environ.get("TRADINGAGENTS_QUICK_TEST_MODE") is not None:
+        analysis_mode = "quick_test" if DEFAULT_CONFIG["quick_test_mode"] else "full"
+        console.print(f"[green]✓ Analysis mode from environment:[/green] {analysis_mode}")
+    else:
+        console.print(
+            create_question_box(
+                "Step 0: Analysis Mode",
+                "Full Analysis runs the whole pipeline; Quick Test runs only "
+                "KeyVolume/Liquidity Sweep/Final Advisor for fast, cheap dev iteration",
+            )
+        )
+        analysis_mode = select_analysis_mode()
+
     # Step 1: Ticker symbol
     console.print(
         create_question_box(
@@ -576,25 +593,33 @@ def get_user_selections():
         )
         output_language = ask_output_language()
 
-    # Step 4: Select analysts
-    console.print(
-        create_question_box(
-            "Step 4: Analysts Team", "Select your LLM analyst agents for the analysis"
+    # Step 4: Select analysts -- skipped entirely in Quick Test mode (no
+    # analyst/debate/risk pipeline runs at all, see docs/agents/quick_test_design.md).
+    if analysis_mode == "quick_test":
+        selected_analysts = []
+        console.print("[green]✓ Quick Test mode:[/green] skipping analyst/debate/risk pipeline")
+    else:
+        console.print(
+            create_question_box(
+                "Step 4: Analysts Team", "Select your LLM analyst agents for the analysis"
+            )
         )
-    )
-    selected_analysts = select_analysts(asset_type)
-    console.print(
-        f"[green]Selected analysts:[/green] {', '.join(analyst.value for analyst in selected_analysts)}"
-    )
+        selected_analysts = select_analysts(asset_type)
+        console.print(
+            f"[green]Selected analysts:[/green] {', '.join(analyst.value for analyst in selected_analysts)}"
+        )
 
-    # Step 5: Research depth (skipped when both round counts are set via env).
+    # Step 5: Research depth (skipped when both round counts are set via env,
+    # or when Quick Test mode makes debate/risk rounds irrelevant).
     # Research depth maps to the debate + risk round counts; when both are
     # supplied through TRADINGAGENTS_MAX_DEBATE_ROUNDS / _MAX_RISK_ROUNDS we keep
     # the run non-interactive and honor the env values (#977).
     depth_from_env = bool(os.environ.get("TRADINGAGENTS_MAX_DEBATE_ROUNDS")) and bool(
         os.environ.get("TRADINGAGENTS_MAX_RISK_ROUNDS")
     )
-    if depth_from_env:
+    if analysis_mode == "quick_test":
+        selected_research_depth = DEFAULT_CONFIG["max_debate_rounds"]  # unused placeholder
+    elif depth_from_env:
         selected_research_depth = DEFAULT_CONFIG["max_debate_rounds"]
         console.print(
             f"[green]✓ Research depth from environment:[/green] "
@@ -738,6 +763,7 @@ def get_user_selections():
         enable_liquidity_sweep = DEFAULT_CONFIG["enable_liquidity_sweep_agent"] if ls_env is not None else checkbox_ls
 
     return {
+        "analysis_mode": analysis_mode,
         "ticker": selected_ticker,
         "asset_type": asset_type.value,
         "analysis_date": analysis_date,
@@ -1028,6 +1054,7 @@ def _build_run_config(selections: dict, checkpoint: bool | None) -> dict:
     # env-vs-checkbox precedence, so this is a plain assignment.
     config["enable_keyvolume_agent"] = selections.get("enable_keyvolume_agent", False)
     config["enable_liquidity_sweep_agent"] = selections.get("enable_liquidity_sweep_agent", False)
+    config["quick_test_mode"] = selections.get("analysis_mode") == "quick_test"
     # --checkpoint/--no-checkpoint overrides only when explicitly given; omitting
     # the flag preserves TRADINGAGENTS_CHECKPOINT_ENABLED / the default (#976).
     if checkpoint is not None:
@@ -1035,10 +1062,10 @@ def _build_run_config(selections: dict, checkpoint: bool | None) -> dict:
     return config
 
 
-def run_analysis(checkpoint: bool | None = None):
-    # First get all user selections
-    selections = get_user_selections()
-
+def run_analysis(selections: dict, checkpoint: bool | None = None):
+    """Full Analysis (unchanged from before Quick Test mode -- ``analyze()``
+    now calls ``get_user_selections()`` once and dispatches here or to
+    ``run_quick_test()``, but this function's own body is untouched)."""
     config = _build_run_config(selections, checkpoint)
 
     # Create stats callback handler for tracking LLM/tool calls
@@ -1314,6 +1341,56 @@ def run_analysis(checkpoint: bool | None = None):
         display_complete_report(final_state)
 
 
+def run_quick_test(selections: dict) -> None:
+    """Quick Test mode (dev/debug -- see docs/agents/quick_test_design.md).
+
+    Runs only KeyVolume/Liquidity Sweep + Final Advisor -- no analyst team,
+    no debate, no research/risk/portfolio chain. Deliberately does NOT use
+    run_analysis()'s Live layout / per-analyst status tracking, since that
+    machinery is built entirely around the Full Analysis node sequence;
+    this is a plain propagate() call with simple before/after console output.
+    """
+    config = _build_run_config(selections, checkpoint=None)
+
+    stats_handler = StatsCallbackHandler()
+    graph = TradingAgentsGraph(
+        selected_analysts=(),  # unused: setup.py's quick_test_mode branch never reads this
+        config=config,
+        debug=False,
+        callbacks=[stats_handler],
+    )
+
+    console.print(Rule(f"Quick Test: {selections['ticker']} on {selections['analysis_date']}", style="bold cyan"))
+    console.print(
+        f"[dim]KeyVolume: {'ON' if config['enable_keyvolume_agent'] else 'off'} | "
+        f"Liquidity Sweep: {'ON' if config['enable_liquidity_sweep_agent'] else 'off'}[/dim]"
+    )
+
+    start_time = time.time()
+    with console.status("[bold cyan]Running Quick Test...[/bold cyan]"):
+        final_state, decision = graph.propagate(
+            selections["ticker"], selections["analysis_date"], asset_type=selections["asset_type"],
+        )
+    elapsed = time.time() - start_time
+
+    stats = stats_handler.get_stats()
+    console.print(f"[green]✓ Quick Test complete[/green] — decision: {decision}")
+    console.print(
+        f"[dim]Wall time: {elapsed:.1f}s | LLM calls: {stats['llm_calls']} | "
+        f"Tokens in/out: {stats['tokens_in']}/{stats['tokens_out']}[/dim]"
+    )
+
+    display_complete_report(final_state)
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_path = Path(config["results_dir"]) / "reports" / f"{selections['ticker']}_quicktest_{stamp}"
+    try:
+        report_file = save_report_to_disk(final_state, selections["ticker"], save_path)
+        console.print(f"[green]Report saved to:[/green] {report_file}")
+    except Exception as e:
+        console.print(f"[red]Error saving report: {e}[/red]")
+
+
 @app.command()
 def analyze(
     checkpoint: bool | None = typer.Option(
@@ -1332,7 +1409,12 @@ def analyze(
         from tradingagents.graph.checkpointer import clear_all_checkpoints
         n = clear_all_checkpoints(DEFAULT_CONFIG["data_cache_dir"])
         console.print(f"[yellow]Cleared {n} checkpoint(s).[/yellow]")
-    run_analysis(checkpoint=checkpoint)
+
+    selections = get_user_selections()
+    if selections["analysis_mode"] == "quick_test":
+        run_quick_test(selections)
+    else:
+        run_analysis(selections, checkpoint=checkpoint)
 
 
 if __name__ == "__main__":

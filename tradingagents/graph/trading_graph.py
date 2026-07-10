@@ -169,11 +169,18 @@ class TradingAgentsGraph:
         self.enable_keyvolume = self.config.get("enable_keyvolume_agent", False)
         self.enable_liquidity_sweep = self.config.get("enable_liquidity_sweep_agent", False)
 
+        # Quick Test mode (dev/debug, off by default): skips the entire
+        # analyst/debate/research/trader/risk/portfolio chain -- see
+        # docs/agents/quick_test_design.md. Same single-file-build-logic rule:
+        # only read here, in setup.py, and in _run_signature/_run_graph below.
+        self.quick_test_mode = self.config.get("quick_test_mode", False)
+
         # Set up the graph: keep the workflow for recompilation with a checkpointer.
         self.workflow = self.graph_setup.setup_graph(
             filtered_analysts,
             enable_keyvolume=self.enable_keyvolume,
             enable_liquidity_sweep=self.enable_liquidity_sweep,
+            quick_test_mode=self.quick_test_mode,
         )
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
@@ -384,6 +391,7 @@ class TradingAgentsGraph:
             "analysts=" + ",".join(self.selected_analysts),
             f"keyvolume={self.enable_keyvolume}",
             f"liquidity_sweep={self.enable_liquidity_sweep}",
+            f"quick_test={self.quick_test_mode}",
             f"debate={self.config['max_debate_rounds']}",
             f"risk={self.config['max_risk_discuss_rounds']}",
             f"asset={asset_type}",
@@ -401,8 +409,13 @@ class TradingAgentsGraph:
         """
         self.ticker = company_name
 
-        # Resolve any pending memory-log entries for this ticker before the pipeline runs.
-        self._resolve_pending_entries(company_name)
+        # Resolve any pending memory-log entries for this ticker before the
+        # pipeline runs. Skipped in Quick Test mode: resolving a pending entry
+        # calls the Reflector (an LLM call), which would add to the exact call
+        # count Quick Test exists to minimize, for a memory system this mode
+        # never writes to anyway (see _run_graph below).
+        if not self.quick_test_mode:
+            self._resolve_pending_entries(company_name)
 
         # Recompile with a checkpointer if the user opted in.
         if self.config.get("checkpoint_enabled"):
@@ -492,15 +505,26 @@ class TradingAgentsGraph:
         # Store current state for reflection.
         self.curr_state = final_state
 
-        # Log state to disk.
-        self._log_state(trade_date, final_state)
+        if self.quick_test_mode:
+            # No Portfolio Manager ran, so final_trade_decision was never
+            # written -- _log_state's Full Analysis shape would KeyError on
+            # it (and on trader_investment_plan/investment_plan). Log a
+            # reduced shape instead, and skip memory_log entirely: there is
+            # no trade decision to remember or reflect on for a dev/debug
+            # run (see docs/agents/quick_test_design.md).
+            self._log_state_quick_test(trade_date, final_state)
+            rating_source = final_state.get("final_advisory_report", "")
+        else:
+            # Log state to disk.
+            self._log_state(trade_date, final_state)
 
-        # Store decision for deferred reflection on the next same-ticker run.
-        self.memory_log.store_decision(
-            ticker=company_name,
-            trade_date=trade_date,
-            final_trade_decision=final_state["final_trade_decision"],
-        )
+            # Store decision for deferred reflection on the next same-ticker run.
+            self.memory_log.store_decision(
+                ticker=company_name,
+                trade_date=trade_date,
+                final_trade_decision=final_state["final_trade_decision"],
+            )
+            rating_source = final_state["final_trade_decision"]
 
         # Clear checkpoint on successful completion to avoid stale state.
         if self.config.get("checkpoint_enabled"):
@@ -509,7 +533,7 @@ class TradingAgentsGraph:
                 self._run_signature(asset_type),
             )
 
-        return final_state, self.process_signal(final_state["final_trade_decision"])
+        return final_state, self.process_signal(rating_source)
 
     def _log_state(self, trade_date, final_state):
         """Log the final state to a JSON file."""
@@ -550,6 +574,32 @@ class TradingAgentsGraph:
         directory.mkdir(parents=True, exist_ok=True)
 
         log_path = directory / f"full_states_log_{trade_date}.json"
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(self.log_states_dict[str(trade_date)], f, indent=4)
+
+    def _log_state_quick_test(self, trade_date, final_state):
+        """Quick Test's reduced state log (see docs/agents/quick_test_design.md).
+
+        Only the 3 fields that can actually exist this run -- KeyVolume/
+        Liquidity Sweep are each independently toggleable, so ``.get()``
+        throughout, never direct indexing. Written to a distinctly-named
+        file (not ``full_states_log_*.json``) so Phase 8's future decision-
+        log tooling, built around the Full Analysis shape, never has to
+        special-case a Quick Test entry mixed into that file.
+        """
+        self.log_states_dict[str(trade_date)] = {
+            "company_of_interest": final_state["company_of_interest"],
+            "trade_date": final_state["trade_date"],
+            "keyvolume_report": final_state.get("keyvolume_report"),
+            "liquidity_sweep_report": final_state.get("liquidity_sweep_report"),
+            "final_advisory_report": final_state.get("final_advisory_report"),
+        }
+
+        safe_ticker = safe_ticker_component(self.ticker)
+        directory = Path(self.config["results_dir"]) / safe_ticker / "TradingAgentsStrategy_logs"
+        directory.mkdir(parents=True, exist_ok=True)
+
+        log_path = directory / f"quick_test_log_{trade_date}.json"
         with open(log_path, "w", encoding="utf-8") as f:
             json.dump(self.log_states_dict[str(trade_date)], f, indent=4)
 

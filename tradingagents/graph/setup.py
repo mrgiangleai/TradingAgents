@@ -66,6 +66,7 @@ class GraphSetup:
         selected_analysts=("market", "social", "news", "fundamentals"),
         enable_keyvolume: bool = False,
         enable_liquidity_sweep: bool = False,
+        quick_test_mode: bool = False,
     ):
         """Set up and compile the agent workflow graph.
 
@@ -84,7 +85,15 @@ class GraphSetup:
             no extra state field ever gets written. Each enabled independently
             of the other; both can be on at once (see "supplementary_nodes"
             below).
+            quick_test_mode (bool): dev/debug mode (off by default). When True,
+                returns a completely separate, much smaller graph (see
+                ``_setup_quick_test_graph`` below) and every line below this
+                check is skipped entirely -- Full Analysis's graph-building
+                code is untouched by this flag. See docs/agents/quick_test_design.md.
         """
+        if quick_test_mode:
+            return self._setup_quick_test_graph(enable_keyvolume, enable_liquidity_sweep)
+
         plan = build_analyst_execution_plan(selected_analysts)
 
         analyst_factories = {
@@ -192,6 +201,36 @@ class GraphSetup:
         # Does not replace Portfolio Manager or touch final_trade_decision --
         # see docs/agents/final_advisor_design.md section 1.
         workflow.add_edge("Portfolio Manager", "Final Advisor")
+        workflow.add_edge("Final Advisor", END)
+
+        return workflow
+
+    def _setup_quick_test_graph(self, enable_keyvolume: bool, enable_liquidity_sweep: bool):
+        """Quick Test mode (dev/debug, see docs/agents/quick_test_design.md).
+
+        Runs only KeyVolume/Liquidity Sweep (per their own existing toggles)
+        and Final Advisor -- skips the entire analyst/debate/research/trader/
+        risk/portfolio chain (0-12 LLM calls saved to 1-3). Reuses the exact
+        same "supplementary_nodes chain" pattern as the Full Analysis path
+        above, just chained to "Final Advisor" instead of the first analyst.
+        Completely separate workflow object -- cannot affect setup_graph's
+        Full Analysis path.
+        """
+        workflow = StateGraph(AgentState)
+        workflow.add_node("Final Advisor", create_final_advisor(self.deep_thinking_llm, quick_test_mode=True))
+
+        supplementary_nodes = []
+        if enable_keyvolume:
+            workflow.add_node("KeyVolume Agent", create_keyvolume_agent_node(self.quick_thinking_llm))
+            supplementary_nodes.append("KeyVolume Agent")
+        if enable_liquidity_sweep:
+            workflow.add_node("Liquidity Sweep Agent", create_liquidity_sweep_agent_node(self.quick_thinking_llm))
+            supplementary_nodes.append("Liquidity Sweep Agent")
+
+        chain = [*supplementary_nodes, "Final Advisor"]
+        workflow.add_edge(START, chain[0])
+        for src, dst in zip(chain, chain[1:]):
+            workflow.add_edge(src, dst)
         workflow.add_edge("Final Advisor", END)
 
         return workflow
