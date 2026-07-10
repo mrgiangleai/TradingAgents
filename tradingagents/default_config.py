@@ -90,6 +90,13 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "TRADINGAGENTS_KEYVOLUME_DATA_DIR",
         os.path.join(os.path.dirname(os.path.abspath(os.path.join(os.path.dirname(__file__), "."))), "data", "keyvolume"),
     ),
+    # Static Liquidity Sweep export directory (Phase 6, mirrors keyvolume_data_dir
+    # above). Populated offline by scripts/liquidity_sweep_export.py. See
+    # docs/data/liquidity_data_format.md.
+    "liquidity_sweep_data_dir": os.getenv(
+        "TRADINGAGENTS_LIQUIDITY_SWEEP_DATA_DIR",
+        os.path.join(os.path.dirname(os.path.abspath(os.path.join(os.path.dirname(__file__), "."))), "data", "liquidity"),
+    ),
     "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR", os.path.join(_TRADINGAGENTS_HOME, "cache")),
     "memory_log_path": os.getenv("TRADINGAGENTS_MEMORY_LOG_PATH", os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md")),
     # Optional cap on the number of resolved memory log entries. When set,
