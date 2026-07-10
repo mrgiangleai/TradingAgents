@@ -14,6 +14,7 @@ import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tradingagents.dataflows.research_platform_symbol import to_research_platform_symbol
 from tradingagents.default_config import DEFAULT_CONFIG
 
 # CSV columns as produced by Backtest-Trading-Lab's
@@ -71,9 +72,14 @@ def _coerce_row(row: dict) -> dict:
 
 def keyvolume_csv_path(symbol: str, date: str, data_dir: str | None = None) -> Path:
     """Resolve the static file path for (symbol, date) per the locked naming
-    convention: ``{data_dir}/{SYMBOL}_{YYYY-MM-DD}.csv`` (Quy tac 4)."""
+    convention: ``{data_dir}/{SYMBOL}_{YYYY-MM-DD}.csv`` (Quy tac 4).
+
+    ``symbol`` is mapped through ``to_research_platform_symbol`` first, so a
+    Yahoo-style ticker like ``BTC-USD`` (what the CLI's ``company_of_interest``
+    actually holds) resolves to the compact export filename (``BTCUSDT``).
+    """
     base = Path(data_dir) if data_dir else Path(DEFAULT_CONFIG["keyvolume_data_dir"])
-    return base / f"{symbol.strip().upper()}_{date}.csv"
+    return base / f"{to_research_platform_symbol(symbol)}_{date}.csv"
 
 
 def load_keyvolume_data(symbol: str, date: str, data_dir: str | None = None) -> KeyVolumeData:

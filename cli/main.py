@@ -39,6 +39,7 @@ from cli.utils import (
     select_llm_provider,
     select_research_depth,
     select_shallow_thinking_agent,
+    select_supplementary_signals,
 )
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.analyst_execution import (
@@ -711,6 +712,31 @@ def get_user_selections():
             "Configure Claude effort level", ask_anthropic_effort,
         )
 
+    # Step 9: Optional supplementary signals (KeyVolume / Liquidity Sweep,
+    # Phase 5/6 -- off by default, advisory only). Each has its own env var;
+    # the interactive checkbox is skipped only when BOTH are already set
+    # (mirrors Step 5's depth_from_env pattern for a bundled step), but an
+    # individually-set env var still wins over the checkbox answer either way.
+    kv_env = os.environ.get("TRADINGAGENTS_ENABLE_KEYVOLUME_AGENT")
+    ls_env = os.environ.get("TRADINGAGENTS_ENABLE_LIQUIDITY_SWEEP_AGENT")
+    if kv_env is not None and ls_env is not None:
+        enable_keyvolume = DEFAULT_CONFIG["enable_keyvolume_agent"]
+        enable_liquidity_sweep = DEFAULT_CONFIG["enable_liquidity_sweep_agent"]
+        console.print(
+            f"[green]✓ Supplementary signals from environment:[/green] "
+            f"KeyVolume={enable_keyvolume}, Liquidity Sweep={enable_liquidity_sweep}"
+        )
+    else:
+        console.print(
+            create_question_box(
+                "Step 9: Supplementary Signals",
+                "Optionally enable KeyVolume / Liquidity Sweep static-data signals",
+            )
+        )
+        checkbox_kv, checkbox_ls = select_supplementary_signals()
+        enable_keyvolume = DEFAULT_CONFIG["enable_keyvolume_agent"] if kv_env is not None else checkbox_kv
+        enable_liquidity_sweep = DEFAULT_CONFIG["enable_liquidity_sweep_agent"] if ls_env is not None else checkbox_ls
+
     return {
         "ticker": selected_ticker,
         "asset_type": asset_type.value,
@@ -725,6 +751,8 @@ def get_user_selections():
         "openai_reasoning_effort": reasoning_effort,
         "anthropic_effort": anthropic_effort,
         "output_language": output_language,
+        "enable_keyvolume_agent": enable_keyvolume,
+        "enable_liquidity_sweep_agent": enable_liquidity_sweep,
     }
 
 
@@ -811,6 +839,21 @@ def display_complete_report(final_state):
         if risk.get("judge_decision"):
             console.print(Panel("[bold]V. Portfolio Manager Decision[/bold]", border_style="green"))
             console.print(Panel(Markdown(risk["judge_decision"]), title="Portfolio Manager", border_style="blue", padding=(1, 2)))
+
+    # VI. KeyVolume Signal (Phase 5, supplementary -- opt-in, off by default)
+    if final_state.get("keyvolume_report"):
+        console.print(Panel("[bold]VI. KeyVolume Signal (supplementary)[/bold]", border_style="bright_cyan"))
+        console.print(Panel(Markdown(final_state["keyvolume_report"]), title="KeyVolume Agent", border_style="blue", padding=(1, 2)))
+
+    # VII. Liquidity Sweep Signal (Phase 6, supplementary -- opt-in, off by default)
+    if final_state.get("liquidity_sweep_report"):
+        console.print(Panel("[bold]VII. Liquidity Sweep Signal (supplementary)[/bold]", border_style="bright_yellow"))
+        console.print(Panel(Markdown(final_state["liquidity_sweep_report"]), title="Liquidity Sweep Agent", border_style="blue", padding=(1, 2)))
+
+    # VIII. Final Advisor (Phase 7, additive -- always runs, no toggle of its own)
+    if final_state.get("final_advisory_report"):
+        console.print(Panel("[bold]VIII. Final Advisor (Advisory Only)[/bold]", border_style="bright_green"))
+        console.print(Panel(Markdown(final_state["final_advisory_report"]), title="Final Advisor", border_style="blue", padding=(1, 2)))
 
 
 def update_research_team_status(status):
@@ -981,6 +1024,10 @@ def _build_run_config(selections: dict, checkpoint: bool | None) -> dict:
     config["openai_reasoning_effort"] = selections.get("openai_reasoning_effort")
     config["anthropic_effort"] = selections.get("anthropic_effort")
     config["output_language"] = selections.get("output_language", "English")
+    # Optional supplementary signals (Phase 5/6) -- Step 9 already resolved
+    # env-vs-checkbox precedence, so this is a plain assignment.
+    config["enable_keyvolume_agent"] = selections.get("enable_keyvolume_agent", False)
+    config["enable_liquidity_sweep_agent"] = selections.get("enable_liquidity_sweep_agent", False)
     # --checkpoint/--no-checkpoint overrides only when explicitly given; omitting
     # the flag preserves TRADINGAGENTS_CHECKPOINT_ENABLED / the default (#976).
     if checkpoint is not None:

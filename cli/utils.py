@@ -164,6 +164,37 @@ def select_analysts(asset_type: AssetType = AssetType.STOCK) -> list[AnalystType
     return choices
 
 
+def select_supplementary_signals() -> tuple[bool, bool]:
+    """Select optional KeyVolume / Liquidity Sweep signals using an interactive
+    checkbox. Both off (empty selection) is valid and is the default -- these
+    are opt-in supplementary signals, not core analysts, so unlike
+    ``select_analysts`` there is no "must select at least one" validation.
+
+    Returns (enable_keyvolume, enable_liquidity_sweep).
+    """
+    choices = questionary.checkbox(
+        "Select optional supplementary signals (advisory only, off by default):",
+        choices=[
+            questionary.Choice("KeyVolume Agent (static export from Backtest-Trading-Lab)", value="keyvolume"),
+            questionary.Choice("Liquidity Sweep Agent (static export from Backtest-Trading-Lab)", value="liquidity_sweep"),
+        ],
+        instruction="\n- Press Space to select/unselect\n- Press Enter when done (leave empty to skip both)",
+        style=questionary.Style(
+            [
+                ("checkbox-selected", "fg:green"),
+                ("selected", "fg:green noinherit"),
+                ("highlighted", "noinherit"),
+                ("pointer", "noinherit"),
+            ]
+        ),
+    ).ask()
+
+    if choices is None:
+        choices = []
+
+    return ("keyvolume" in choices, "liquidity_sweep" in choices)
+
+
 def select_research_depth() -> int:
     """Select research depth using an interactive selection."""
 
