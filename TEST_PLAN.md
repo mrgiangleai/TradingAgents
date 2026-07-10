@@ -265,3 +265,65 @@ Prompt cuối cùng: nhúng trực tiếp trong `keyvolume_agent.py` (không tá
 - [x] Viết adapter (`scripts/keyvolume_export.py` — export side; `tradingagents/dataflows/keyvolume.py` — loader side).
 - [x] Test dữ liệu 1 symbol/date thật — pass.
 - [x] Tạo KeyVolume Agent standalone, test cả no-data/dữ liệu thật/0-line — pass. **Chưa** wire vào graph (Phase 5.3, chưa làm).
+
+---
+
+## Phase 5.3 — Wire KeyVolume Agent vào graph qua toggle
+
+**Ngày chạy:** 2026-07-10
+**Memory path dùng:** `~/.tradingagents/memory/test_memory.md` (Quy tắc 1)
+
+### File bị sửa (tối thiểu cần thiết, không đụng Trading Research Platform / Liquidity Sweep)
+
+| File | Lý do bắt buộc phải sửa |
+|---|---|
+| `tradingagents/default_config.py` | Thêm cờ `enable_keyvolume_agent` (default `False` — opt-in, không đổi hành vi mặc định) + dòng `_ENV_OVERRIDES`. |
+| `tradingagents/graph/setup.py` | **File build graph (Quy tắc 5)** — thêm tham số `enable_keyvolume`, chỉ `add_node`/`add_edge` "KeyVolume Agent" khi bật; khi tắt, cạnh `START -> {analyst đầu tiên}` giữ nguyên y hệt trước Phase 5.3 (không có node/cạnh mới nào được thêm). |
+| `tradingagents/graph/trading_graph.py` | Đọc `config["enable_keyvolume_agent"]`, truyền vào `setup_graph(...)`; thêm `enable_keyvolume` vào `_run_signature()` (checkpoint signature) theo đúng lý do đã áp dụng cho analyst toggle ở Phase 3 (#1089). |
+| `tradingagents/agents/utils/agent_states.py` | Thêm field `keyvolume_report` vào `AgentState` — bắt buộc vì LangGraph định nghĩa channel theo TypedDict schema; thiếu field này thì node mới không ghi được vào state. |
+| `tradingagents/agents/signals/keyvolume_agent.py` | Thêm `render_keyvolume_result()` + `create_keyvolume_agent_node()` — bọc agent standalone (Phase 5.2, nhận `symbol, date`) thành node LangGraph (`state -> dict`), đọc `company_of_interest`/`trade_date` có sẵn trong state. |
+| `tradingagents/reporting.py` | Thêm mục "VI. KeyVolume Signal" (folder `6_keyvolume/`) vào `write_report_tree` — chỉ khi `final_state.get("keyvolume_report")` có giá trị — để kết quả thực sự xuất hiện trong **report cuối** (`complete_report.md`), không chỉ nằm im trong state nội bộ. Thuần cộng thêm, không đổi số thứ tự section 1-5 có sẵn (không phá `tests/test_reporting.py`). |
+
+**Không sửa:** `analyst_execution.py`, bất kỳ file `agents/researchers/`, `agents/risk_mgmt/`, `agents/managers/`, `agents/trader/` (Portfolio Manager/Research Manager/Trader không đọc `keyvolume_report` — đây là tín hiệu bổ sung độc lập, Phase 7 Final Advisor mới là nơi gộp lại), `propagation.py` (không cần khởi tạo `""` cho `keyvolume_report` vì hiện chưa có node nào đọc trực tiếp bằng `state["keyvolume_report"]` — chỉ `reporting.py` dùng `.get()`, đã an toàn với key vắng mặt hoàn toàn khi tắt), và không đụng bất kỳ file nào trong `Backtest-Trading-Lab/`.
+
+### Vị trí node trong graph
+
+`START -> KeyVolume Agent -> {analyst đầu tiên}` khi bật (chạy tuần tự, trước 4 analyst, không blocking gì khác); `START -> {analyst đầu tiên}` y hệt trước Phase 5.3 khi tắt. Không có node hiện có nào đọc `keyvolume_report` (Bull/Bear Researcher, Aggressive/Conservative/Neutral vẫn chỉ đọc 4 report gốc như cũ) — bật/tắt KeyVolume Agent không ảnh hưởng bất kỳ quyết định nào của các agent khác, kể cả khi bật.
+
+### Test 1 — Cấu trúc graph (không tốn API)
+
+| Case | Node "KeyVolume Agent" có mặt? | Tổng số node |
+|---|---|---|
+| `enable_keyvolume_agent=False` (mặc định) | ❌ Không | 20 (y hệt trước Phase 5.3) |
+| `enable_keyvolume_agent=True` | ✅ Có | 21 |
+
+### Test 2 — Full pipeline thật, 3 case bắt buộc (memory test)
+
+| Case | Ticker/ngày | `keyvolume_report` trong `final_state` | Crash? | `final_trade_decision` | Thời gian |
+|---|---|---|---|---|---|
+| **ON + có dữ liệu** | BTCUSDT / 2026-07-09 (file export thật từ Phase 4/5) | `**Signal:** neutral / **Confidence:** medium` + evidence trích line #7 (`final_score=44.38`, active) vs line #2/#3/#9 (invalidated) | ❌ Không | Overweight | 67.8s |
+| **ON + thiếu dữ liệu** | ETHUSDT / 2026-07-09 (không có file export) | `**Signal:** no_data` + `"No KeyVolume data available for ETHUSDT on 2026-07-09."` — không đoán | ❌ Không | Buy | 48.7s |
+| **OFF** (mặc định) | SOLUSDT / 2026-07-09 | Key `keyvolume_report` **không tồn tại** trong `final_state` (`'keyvolume_report' in state` → `False`) — graph identical với trước Phase 5.3 | ❌ Không | Hold | 55.8s |
+
+Cả 3 case: `final_trade_decision` vẫn sinh ra bình thường, không rỗng, không lỗi — xác nhận "report cuối vẫn sinh ra" đúng yêu cầu.
+
+### Test 3 — `write_report_tree` (report cuối thực sự chứa kết quả khi bật)
+
+Test đơn vị trực tiếp (không qua LLM, dùng state giả lập giống format `tests/test_reporting.py`):
+- ✅ `keyvolume_report` có giá trị → tạo `6_keyvolume/keyvolume.md` + mục "## VI. KeyVolume Signal" xuất hiện trong `complete_report.md`.
+- ✅ `keyvolume_report` vắng mặt (case OFF) → không tạo folder `6_keyvolume/`, không xuất hiện chữ "KeyVolume" nào trong `complete_report.md`.
+- Không chạy được `pytest tests/test_reporting.py` trực tiếp (pytest không cài trong venv hiện tại — khai báo trong `pyproject.toml` nhưng chưa `pip install`), nhưng test thủ công ở trên dùng đúng fixture shape + đúng assertion mà `test_write_report_tree_creates_files` đã kiểm (tạo file, nội dung folder, nội dung `complete_report.md`) — không phát hiện lệch, không có regression trên 5 section cũ (1-5 vẫn giữ nguyên số thứ tự).
+
+### Kiểm chứng cách ly memory (Quy tắc 1)
+
+- ✅ `test_memory.md` có thêm 3 entry mới: BTCUSDT, ETHUSDT, SOLUSDT (tổng 12 entry `ENTRY_END`).
+- ✅ `trading_memory.md` (memory thật) — vẫn không tồn tại.
+
+### Điều kiện hoàn thành Bước 5.3
+
+- [x] Cờ config bật/tắt KeyVolume Agent hoạt động đúng.
+- [x] Bật + có dữ liệu → agent đọc structured data thật, kết quả vào state (`keyvolume_report`) và report cuối (`complete_report.md` mục VI).
+- [x] Bật + thiếu file → không crash, không đoán (`signal="no_data"`), pipeline chạy tiếp bình thường.
+- [x] Tắt → graph y hệt trước Phase 5.3, không có `keyvolume_report`, không crash.
+- [x] Cả 3 case: `final_trade_decision` vẫn sinh ra.
+- [x] Không sửa logic Backtest-Trading-Lab, không đụng Liquidity Sweep, không đụng Researcher/Risk/Portfolio Manager.

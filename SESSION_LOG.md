@@ -245,3 +245,32 @@ Commit:
 Next:
 - Phase 5.3 — wire the KeyVolume Agent into the graph as a real node (needs an `AgentState` field + a toggle config flag, following the Phase 3 analyst-toggle pattern), not started this session.
 - Phase 6 — Liquidity Sweep Agent (same structure as Phase 4/5, different data format from Backtest-Trading-Lab's Module 2), not started.
+
+---
+
+## Phase 5.3
+
+Done:
+- Wired the standalone KeyVolume Agent (Phase 5.1/5.2) into the graph behind a config toggle, following the exact Phase 3 analyst-toggle architecture (config flag → filtered/conditional graph shape decided in one place, no agent file checks its own enabled state).
+- Touched 6 files, each for a distinct, necessary reason (documented in `TEST_PLAN.md`): `default_config.py` (new `enable_keyvolume_agent` flag, default `False` — opt-in, existing pipelines unaffected until a user turns it on), `graph/setup.py` (the graph-build file, Quy tắc 5 — conditionally adds the "KeyVolume Agent" node + `START` edge only when enabled; the disabled path is byte-for-byte the same edge as before Phase 5.3), `graph/trading_graph.py` (reads the config flag, passes it to `setup_graph`, adds it to `_run_signature()`'s checkpoint signature for the same #1089 reason the analyst toggles already do), `agents/utils/agent_states.py` (added `keyvolume_report` — required because LangGraph derives its state channels from the `AgentState` TypedDict schema, not just from whatever a node happens to return), `agents/signals/keyvolume_agent.py` (added `render_keyvolume_result`/`create_keyvolume_agent_node`, a thin `state -> dict` wrapper around the existing standalone `(symbol, date) -> KeyVolumeResult` function), and `reporting.py` (new, purely additive "VI. KeyVolume Signal" / `6_keyvolume/` section in `write_report_tree`, so the result actually reaches the saved `complete_report.md` — "report cuối" — not just internal state; doesn't renumber sections 1-5 or touch `tests/test_reporting.py`'s existing assertions).
+- Deliberately did not touch: `analyst_execution.py`, any Researcher/Risk/Portfolio Manager/Trader file (none of them read `keyvolume_report` — it's an independent supplementary signal; Phase 7 Final Advisor is where everything gets combined), `propagation.py` (no node reads `state["keyvolume_report"]` via direct indexing yet, so there's no `KeyError` risk from leaving it uninitialized when disabled — flagged as something Phase 7 should revisit if it ever reads the field that way), Liquidity Sweep, or anything in Backtest-Trading-Lab.
+- KeyVolume Agent runs once, sequentially, right after `START` and before the first analyst, only when enabled — chosen over a parallel branch to avoid LangGraph fan-in/join complexity for a field nothing else reads yet.
+
+Test:
+- ✅ Structural check (no LLM calls): OFF → 20 nodes, no "KeyVolume Agent" node (identical to pre-5.3 shape); ON → 21 nodes, node present.
+- ✅ Full pipeline, ON + real data (BTCUSDT, 2026-07-09, using the real export from the last session, 67.8s): `keyvolume_report` = neutral/medium signal citing real lines (#7 active/44.38 vs #2/#3/#9 invalidated), decision produced (Overweight), no crash.
+- ✅ Full pipeline, ON + missing data (ETHUSDT, 2026-07-09, no export file exists, 48.7s): `keyvolume_report` = `no_data` with a clear message, no guessing, decision still produced (Buy), no crash.
+- ✅ Full pipeline, OFF (SOLUSDT, 2026-07-09, default config, 55.8s): `"keyvolume_report" in final_state` is `False` — graph behaves exactly as before Phase 5.3, decision produced (Hold), no crash.
+- ✅ `write_report_tree` unit-level check (pytest not installed in this venv, so verified manually with the same fixture shape/assertions `tests/test_reporting.py` uses): `keyvolume_report` present → `6_keyvolume/keyvolume.md` written + "VI. KeyVolume Signal" in `complete_report.md`; absent → neither appears, no regression on the existing 5 sections.
+- Full results in `TEST_PLAN.md` under "Phase 5.3".
+
+Memory path used this session:
+- `~/.tradingagents/memory/test_memory.md` (via `TRADINGAGENTS_MEMORY_LOG_PATH`), for the 3 live pipeline runs (BTCUSDT, ETHUSDT, SOLUSDT). `test_memory.md` now has 12 pending entries total; `trading_memory.md` (real memory) still does not exist.
+
+Commit:
+- feat: integrate keyvolume agent into pipeline
+- docs: record phase 5.3 test results
+
+Next:
+- Phase 6 — Liquidity Sweep Agent (same structure as Phase 4/5, different data format from Backtest-Trading-Lab's Module 2), not started.
+- Phase 7 — Market Bias / Final Advisor: the node that will actually combine `keyvolume_report` (and, later, Liquidity Sweep) with the 4 analyst reports into one synthesized advisory read — not started; currently `keyvolume_report` sits alongside the rest of state/report but nothing downstream reads it yet.
