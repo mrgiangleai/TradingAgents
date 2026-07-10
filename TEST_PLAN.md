@@ -327,3 +327,82 @@ Test đơn vị trực tiếp (không qua LLM, dùng state giả lập giống f
 - [x] Tắt → graph y hệt trước Phase 5.3, không có `keyvolume_report`, không crash.
 - [x] Cả 3 case: `final_trade_decision` vẫn sinh ra.
 - [x] Không sửa logic Backtest-Trading-Lab, không đụng Liquidity Sweep, không đụng Researcher/Risk/Portfolio Manager.
+
+---
+
+## Phase 6 — Liquidity Sweep Agent (contract audit → adapter → standalone agent → wire vào graph)
+
+**Ngày chạy:** 2026-07-10
+**Memory path dùng:** `~/.tradingagents/memory/test_memory.md` (Quy tắc 1)
+**Bối cảnh:** Lặp lại đúng cấu trúc Phase 4/5/5.3 (KeyVolume) cho Liquidity Sweep, gộp thành 1 phiên theo yêu cầu user.
+
+### Contract đã audit (Backtest-Trading-Lab, không sửa gì ở đó)
+
+`signals/liquidity_sweep/service.py::LiquiditySweepService.run(df, lines) -> LiquiditySweepResult` — khác Module 1, **phụ thuộc `lines` từ Module 1**. Dùng đúng `signals/engine_kit/pipeline.py::run_core_pipeline(df)` (cơ chế composition chống lookahead có sẵn của chính Backtest-Trading-Lab, không tự viết) để ghép Module 1→2 đúng cách, tránh lặp lại bug lookahead đã ghi nhận trong `architecture_handoff.md`. Không copy bất kỳ logic detect nào (wick dominance, ATR pierce...) sang TradingAgents — toàn bộ nằm ở `scripts/liquidity_sweep_export.py` chỉ gọi hàm export có sẵn (`export_events_to_csv`). Chi tiết đầy đủ + ví dụ dữ liệu thật ở `docs/data/liquidity_data_format.md`.
+
+**Khác biệt quan trọng so với KeyVolume:** `sweep_strength`/`sweep_depth`/`rejection_strength` **đều chưa validate** (Phase 2.5 Backtest-Trading-Lab: `sweep_strength` correlation ~0.001, continuation ratio 55.9% — không phân biệt được với tung đồng xu, n=34). Chỉ `keyvolume_final_score` (copy từ Module 1, đã validate riêng) là field đáng tin cậy trên mỗi dòng. Agent design (`docs/agents/liquidity_sweep_agent_design.md`) loại hẳn 3 field chưa validate khỏi prompt — nghiêm ngặt hơn KeyVolume Agent (vốn còn giữ lại field lifecycle làm ngữ cảnh).
+
+### Test 1 — Export + Loader (1 symbol/date thật)
+
+```
+/path/to/Backtest-Trading-Lab/.venv/bin/python scripts/liquidity_sweep_export.py BTCUSDT 2026-07-09
+```
+- ✅ 720 nến 1h, đúng biên UTC (Quy tắc 6). `run_core_pipeline` sinh 1 sweep event (từ 9 KeyVolume line) → ghi `data/liquidity/BTCUSDT_2026-07-09.csv`, đúng 11 cột đã audit.
+- ✅ Sinh thêm mẫu DOGEUSDT/2026-07-09 (3 event, phong phú hơn để test đọc nhiều event cùng lúc).
+- ✅ Loader (`load_liquidity_sweep_data`): file thật → `available=True`, đúng kiểu dữ liệu; file không tồn tại → `available=False`, `events=[]`, không crash.
+
+### Test 2 — Agent standalone (`tradingagents/agents/signals/liquidity_sweep_agent.py`)
+
+| Case | Input | Kết quả |
+|---|---|---|
+| Thiếu dữ liệu | `("ETHUSDT", "2099-01-01")` | `signal="no_data"`, `confidence=None`, 0.000s — không gọi LLM |
+| Dữ liệu thật, chạy 3 lần | `("BTCUSDT", "2026-07-09")` × 3 | Cả 3 lần: `signal="bullish"` (đúng mapping BUY sweep → BULLISH, nguồn từ quy ước Module 3 sẵn có), confidence low/medium, evidence trích đúng event thật, **không** nhắc tới `sweep_strength`/`sweep_depth`/`rejection_strength` (đúng thiết kế loại field chưa validate) |
+| Có export nhưng 0 event | file CSV chỉ có header, `("TESTEMPTY", "2026-07-09")` | `available=True, events=[]` → vẫn gọi LLM → `signal="neutral"`, `confidence="low"` |
+
+### Test 3 — Wire vào graph (Phase 6.3)
+
+**File bị sửa (tối thiểu, giống hệt pattern Phase 5.3):** `default_config.py` (cờ `enable_liquidity_sweep_agent`, default `False`), `graph/setup.py` (tổng quát hoá đoạn wiring KeyVolume Phase 5.3 thành danh sách `supplementary_nodes`, thêm node "Liquidity Sweep Agent" có điều kiện — vẫn đúng 1 file build graph theo Quy tắc 5), `graph/trading_graph.py` (đọc cờ, truyền vào `setup_graph`, thêm vào `_run_signature`), `agents/utils/agent_states.py` (field `liquidity_sweep_report`), `reporting.py` (mục "VII. Liquidity Sweep Signal", `7_liquidity_sweep/`, thuần cộng thêm).
+
+**Không sửa:** Researcher/Risk/Portfolio Manager, `analyst_execution.py`, `propagation.py`, KeyVolume Agent's own code, Backtest-Trading-Lab.
+
+#### Test cấu trúc — đủ 4 tổ hợp (không tốn API, đúng yêu cầu ROADMAP Bước 6.3)
+
+| KeyVolume | Liquidity Sweep | Node count | KV node | LS node |
+|---|---|---|---|---|
+| ❌ | ❌ | 20 | Không | Không |
+| ❌ | ✅ | 21 | Không | Có |
+| ✅ | ❌ | 21 | Có | Không |
+| ✅ | ✅ | 22 | Có | Có |
+
+→ Mỗi cờ chỉ ảnh hưởng đúng node của chính nó, không giao thoa.
+
+#### Test full pipeline thật (memory test) — 3 case bắt buộc + 1 combo "không xung đột"
+
+| Case | Ticker/ngày | `liquidity_sweep_report` | Crash? | `final_trade_decision` | Thời gian |
+|---|---|---|---|---|---|
+| **ON + có dữ liệu** | DOGEUSDT / 2026-07-09 | `bullish`/`medium`, trích đúng 3 event thật (đều `buy`) | ❌ | Underweight | 81.5s |
+| **ON + thiếu dữ liệu** | XRPUSDT / 2026-07-09 (không export) | `no_data` + message rõ ràng | ❌ | Hold | 48.6s |
+| **OFF** (mặc định) | ADAUSDT / 2026-07-09 | Key không tồn tại trong `final_state`; đồng thời `keyvolume_report` cũng không tồn tại (cả 2 cờ default `False`) | ❌ | Underweight | 70.1s |
+| **Combo: KeyVolume ON + Liquidity Sweep ON** | BTCUSDT / 2026-07-09 (cả 2 export thật đã có) | `bullish`/`medium` (event thật), đồng thời `keyvolume_report`=`neutral`/`medium` — 2 report độc lập, không đè lên nhau | ❌ | Buy | 54.9s |
+
+Cả 4 case: `final_trade_decision` vẫn sinh ra bình thường. Case combo xác nhận trực tiếp yêu cầu ROADMAP "test đủ 4 tổ hợp bật/tắt (KeyVolume × LiquiditySweep)... không xung đột" — 2 report field độc lập, không ai ghi đè field của ai, cả 2 xuất hiện đồng thời trong state.
+
+#### Test `write_report_tree` — cả 2 mục cùng lúc
+
+- ✅ `keyvolume_report` + `liquidity_sweep_report` cùng có giá trị → tạo cả `6_keyvolume/` và `7_liquidity_sweep/`, cả 2 mục "VI"/"VII" cùng xuất hiện trong `complete_report.md`, không mục nào ghi đè mục nào.
+
+### Kiểm chứng cách ly memory (Quy tắc 1)
+
+- ✅ `test_memory.md` có thêm entry mới cho DOGEUSDT, XRPUSDT, ADAUSDT, BTCUSDT (tổng 15 entry `ENTRY_END`).
+- ✅ `trading_memory.md` (memory thật) — vẫn không tồn tại.
+
+### Điều kiện hoàn thành Phase 6
+
+- [x] Audit contract/export Liquidity Sweep thật, không đoán field.
+- [x] Dùng structured CSV/JSON có sẵn (`run_core_pipeline` + `export_events_to_csv`), không copy logic engine.
+- [x] Loader/adapter hoạt động đúng (có dữ liệu / thiếu file).
+- [x] Agent standalone, structured output, test no-data/dữ liệu thật/0-event — pass.
+- [x] Cờ config bật/tắt hoạt động đúng, độc lập với KeyVolume.
+- [x] Wire vào graph — đủ 4 tổ hợp cấu trúc + 4 case chạy thật (gồm combo cả 2 ON) — không crash, không xung đột.
+- [x] Tắt hoặc thiếu dữ liệu → không đoán, pipeline chạy tiếp, report cuối vẫn sinh ra.
+- [x] Không làm Final Advisor/Phase 7.

@@ -274,3 +274,42 @@ Commit:
 Next:
 - Phase 6 — Liquidity Sweep Agent (same structure as Phase 4/5, different data format from Backtest-Trading-Lab's Module 2), not started.
 - Phase 7 — Market Bias / Final Advisor: the node that will actually combine `keyvolume_report` (and, later, Liquidity Sweep) with the 4 analyst reports into one synthesized advisory read — not started; currently `keyvolume_report` sits alongside the rest of state/report but nothing downstream reads it yet.
+
+---
+
+## Phase 6 (Liquidity Sweep Agent, full stack in one session)
+
+User-directed session mirroring Phase 4/5/5.3's structure exactly for Liquidity Sweep instead of KeyVolume: audit contract → adapter → loader → standalone agent → wire into graph via toggle, all in one pass.
+
+Done:
+- Audited `signals/liquidity_sweep/service.py`/`export.py` in Backtest-Trading-Lab. Key structural difference from Module 1: Module 2 takes Module 1's `lines` as input, and `architecture_handoff.md` documents a real, previously-shipped lookahead bug from chaining `KeyVolumeService.run()` then feeding its complete `lines` into `LiquiditySweepService.run(df, lines)`. Used `signals/engine_kit/pipeline.py::run_core_pipeline(df)` instead — Backtest-Trading-Lab's own already-built, already-fixed composition helper — so `scripts/liquidity_sweep_export.py` never reimplements or risks re-introducing that bug, and copies zero detection logic.
+- Wrote `docs/data/liquidity_data_format.md` (mini-4.1): schema (id/line_id/line_price/keyvolume_final_score/keyvolume_status/direction/sweep_strength/sweep_depth/rejection_strength/index/time), same file convention (`data/liquidity/{SYMBOL}_{DATE}.csv`), and the one finding that reshapes the agent design: `sweep_strength` has **no** validated predictive value (Phase 2.5, Backtest-Trading-Lab, n=34, coin-flip continuation ratio) — unlike KeyVolume's `final_score`, Liquidity Sweep has no field of its own that's been shown to predict anything; only `keyvolume_final_score` (riding along from Module 1) is validated, and it describes the swept *line's* quality, not the sweep itself.
+- Wrote `scripts/liquidity_sweep_export.py` (offline, run with Backtest-Trading-Lab's venv, same anti-lookahead UTC truncation duplicated from `keyvolume_export.py` for standalone-per-script simplicity) and `tradingagents/dataflows/liquidity_sweep.py::load_liquidity_sweep_data` (mirrors `keyvolume.py` exactly, `available=False` on missing file, `available=True, events=[]` distinct from that).
+- Generated real exports for BTCUSDT/2026-07-09 (1 event) and DOGEUSDT/2026-07-09 (3 events, richer multi-event sample).
+- Designed (`docs/agents/liquidity_sweep_agent_design.md`) and built (`tradingagents/agents/signals/liquidity_sweep_agent.py` + `LiquiditySweepSignal`/`LiquiditySweepReport` in `schemas.py`) the standalone agent. Two design calls worth remembering: (1) unlike KeyVolume, `sweep_strength`/`sweep_depth`/`rejection_strength` are excluded from the prompt entirely, not just as "unscored context" — every one of them is a component of the exact score that failed validation, so there's no safe partial use the way KeyVolume's lifecycle fields had; (2) the bullish/bearish mapping (BUY sweep -> bullish, SELL sweep -> bearish) is not invented here — it's sourced directly from Backtest-Trading-Lab's own Module 3 (`BiasWatch.implied_direction` convention), with an explicit prompt hedge that this is an implied structural read, not a validated forecast.
+- Wired both agents into the graph together (Phase 6.3): generalized Phase 5.3's single-`if enable_keyvolume` block in `graph/setup.py` into a `supplementary_nodes` list so either flag independently adds/removes its own node and both chain in front of the first analyst when both are on (`START -> KeyVolume Agent -> Liquidity Sweep Agent -> first analyst`). Touched the same 6 files as Phase 5.3, plus `graph/setup.py` a second time (generalizing, not duplicating, the existing conditional) and `reporting.py` a second time (new "VII. Liquidity Sweep Signal" / `7_liquidity_sweep/` section, purely additive like section VI). `_run_signature()` now includes both `keyvolume=`/`liquidity_sweep=` flags.
+- Deliberately did not touch: KeyVolume Agent's own code (only setup.py's wiring block was generalized, not KeyVolume's logic itself), Researcher/Risk/Portfolio Manager, `analyst_execution.py`, `propagation.py`, Phase 7 Final Advisor, or anything in Backtest-Trading-Lab.
+
+Test:
+- ✅ Loader: real file (BTCUSDT, 1 event) → correct parse; missing file → `available=False`, no crash.
+- ✅ Standalone agent: no-data (0.000s, no LLM call); 3x real-data runs all `signal="bullish"` (correct BUY-sweep mapping), evidence never mentions the excluded unvalidated fields; available-but-zero-events correctly routed to the LLM (not the no-data path), got `neutral`/`low`.
+- ✅ Structural check, all 4 KeyVolume × Liquidity Sweep combinations (no LLM cost): node counts 20/21/21/22 exactly as expected, each flag controls only its own node.
+- ✅ Full pipeline, 4 live runs (memory test): Liquidity Sweep ON + data (DOGEUSDT, 81.5s, bullish/medium citing all 3 real events) — ON + missing data (XRPUSDT, 48.6s, no_data) — both OFF (ADAUSDT, 70.1s, neither report key present) — **combo: KeyVolume ON + Liquidity Sweep ON together** (BTCUSDT, 54.9s) produced two independent, non-interfering reports (`keyvolume_report`=neutral/medium, `liquidity_sweep_report`=bullish/medium) in the same run, directly confirming ROADMAP's "no conflict between the two toggles" requirement. All 4 runs produced a normal `final_trade_decision`, none crashed.
+- ✅ `write_report_tree`: both sections present together (`6_keyvolume/` + `7_liquidity_sweep/`), neither overwrites the other, no regression on sections 1-5.
+- Full results in `TEST_PLAN.md` under "Phase 6".
+
+Memory path used this session:
+- `~/.tradingagents/memory/test_memory.md` (via `TRADINGAGENTS_MEMORY_LOG_PATH`), for the 4 live pipeline runs (DOGEUSDT, XRPUSDT, ADAUSDT, BTCUSDT). `test_memory.md` now has 15 pending entries total; `trading_memory.md` (real memory) still does not exist.
+
+Commit:
+- chore: add liquidity sweep export adapter (Backtest-Trading-Lab -> static CSV)
+- docs: document liquidity sweep data format + real sample
+- feat: add liquidity sweep data loader
+- docs: design liquidity sweep agent
+- feat: add standalone liquidity sweep agent
+- feat: integrate liquidity sweep agent into pipeline
+- docs: record phase 6 test results
+
+Next:
+- Phase 7 — Market Bias / Final Advisor: combine the 4 analyst reports + `keyvolume_report` + `liquidity_sweep_report` into one synthesized advisory read. Not started; both supplementary reports currently sit in state/report but nothing downstream reads either one yet.
+- Phase 8 — Decision Log & Backtest Evidence: `_log_state` in `trading_graph.py` still doesn't include `keyvolume_report`/`liquidity_sweep_report` (deliberately out of scope for Phase 5.3/6.3, reserved for Phase 8's "extend decision log" step).
