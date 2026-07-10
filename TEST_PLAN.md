@@ -470,3 +470,79 @@ Cả 5 case: `final_advisory_report` **luôn** sinh ra, luôn có dòng `"**Advi
 - [x] Không sửa Backtest-Trading-Lab.
 - [x] Không làm Phase 8 (`_log_state` không đổi).
 - [x] Cả 5 test case yêu cầu (2 ON / chỉ KV / chỉ LS / cả 2 OFF / thiếu dữ liệu) đều pass, full pipeline luôn sinh report cuối.
+
+---
+
+## UX fix — 3 vấn đề đã chẩn đoán ở phiên trước (symbol mapping, CLI toggle, display_complete_report)
+
+**Ngày chạy:** 2026-07-10
+**Memory path dùng:** `~/.tradingagents/memory/test_memory.md` (Quy tắc 1)
+**Bối cảnh:** Sửa đúng 3 vấn đề UX đã chẩn đoán ở phiên trước (không sửa logic agent, không sửa Backtest-Trading-Lab).
+
+### Vấn đề 1 — Symbol mapping riêng cho dữ liệu Trading Research Platform
+
+File mới `tradingagents/dataflows/research_platform_symbol.py::to_research_platform_symbol()` — map `BTC-USD`/`BTC-USDT`/`BTC-USDC` (dạng Yahoo-dashed, những gì CLI thực sự tạo ra qua `get_ticker()`) → `BTCUSDT` (dạng compact Binance dùng cho tên file export). Áp dụng đúng 1 chỗ: `keyvolume_csv_path()`/`liquidity_sweep_csv_path()` trong 2 loader — **không đụng** `symbol_utils.py`/`normalize_symbol` (đường Yahoo/yfinance).
+
+**Test:**
+| Input | Output |
+|---|---|
+| `BTC-USD` | `BTCUSDT` |
+| `btc-usd` | `BTCUSDT` |
+| `BTC-USDT` | `BTCUSDT` |
+| `BTC-USDC` | `BTCUSDT` |
+| `BTCUSDT` (đã compact) | `BTCUSDT` (giữ nguyên) |
+| `AAPL` (stock) | `AAPL` (giữ nguyên) |
+| `ETH-USD` | `ETHUSDT` |
+
+- ✅ `load_keyvolume_data("BTC-USD", "2026-07-09")` → `available=True`, đọc đúng `data/keyvolume/BTCUSDT_2026-07-09.csv` (9 dòng).
+- ✅ `load_liquidity_sweep_data("BTC-USD", "2026-07-09")` → `available=True`, đọc đúng `data/liquidity/BTCUSDT_2026-07-09.csv` (1 event).
+- ✅ `git diff tradingagents/dataflows/symbol_utils.py` — rỗng, xác nhận không đụng đường Yahoo. `normalize_symbol()` cho kết quả y hệt trước khi sửa (BTCUSDT→BTC-USD, AAPL→AAPL, XAUUSD→GC=F).
+
+### Vấn đề 2 — Toggle KeyVolume/Liquidity Sweep trong CLI wizard
+
+Thêm `select_supplementary_signals()` (`cli/utils.py`, checkbox 2 lựa chọn, không bắt buộc chọn — mặc định cả 2 tắt) + "Step 9: Supplementary Signals" trong `get_user_selections()` (`cli/main.py`), theo đúng pattern env-precedence các step khác đã dùng (bỏ qua prompt nếu **cả 2** biến env `TRADINGAGENTS_ENABLE_KEYVOLUME_AGENT`/`_ENABLE_LIQUIDITY_SWEEP_AGENT` đã set; nếu chỉ 1 biến set, vẫn hỏi nhưng biến đã set vẫn thắng). `_build_run_config()` gán `config["enable_keyvolume_agent"]`/`config["enable_liquidity_sweep_agent"]` từ lựa chọn.
+
+**Test (không chạy được toàn bộ wizard qua stdin — hạn chế đã ghi nhận ở phiên trước; test logic từng phần thay vì driving cả wizard):**
+- ✅ `select_supplementary_signals()` mock `questionary.checkbox` với 5 case (rỗng / chỉ KV / chỉ LS / cả 2 / ấn Esc trả `None`) → tuple đúng cho cả 5: `(False,False)/(True,False)/(False,True)/(True,True)/(False,False)`.
+- ✅ Case "cả 2 biến env đã set" → `DEFAULT_CONFIG["enable_keyvolume_agent"]`/`["enable_liquidity_sweep_agent"]` phản ánh đúng giá trị env (`True, True`), xác nhận nhánh bỏ-qua-prompt trong Step 9 đọc đúng nguồn.
+
+### Vấn đề 3 — `display_complete_report()` hiển thị Section VI/VII/VIII
+
+Thêm 3 block mới sau Section V trong `cli/main.py::display_complete_report()`, cùng cấp thụt lề với `if final_state.get("risk_debate_state")` (không lồng vào trong, nên hiện độc lập với risk debate) — mirror đúng `reporting.py::write_report_tree`'s section 6-8.
+
+**Test:**
+- ✅ Dựng `Console(record=True)` giả lập, gọi thẳng `display_complete_report()` với state có đủ `keyvolume_report`/`liquidity_sweep_report`/`final_advisory_report` → cả 3 "VI./VII./VIII." xuất hiện đúng nội dung, đúng thứ tự, dòng "Advisory only" có mặt.
+- ✅ Regression: state kiểu cũ (không có 3 field mới) → chỉ dừng ở "V. Portfolio Manager Decision", không in "VI./VII./VIII." nào — không phá hành vi cũ.
+
+### Test tổng — full pipeline thật với `BTC-USD` / `2026-07-09` (đúng giá trị CLI wizard tạo ra)
+
+```python
+config["enable_keyvolume_agent"] = True
+config["enable_liquidity_sweep_agent"] = True
+graph.propagate("BTC-USD", "2026-07-09", asset_type="crypto")
+```
+
+(Không tự động hoá được toàn bộ wizard qua stdin — xem hạn chế đã ghi ở phiên chẩn đoán trước; test bằng cách gọi đúng `propagate()` với `company_of_interest="BTC-USD"`, giá trị mà `get_ticker()` chắc chắn tạo ra cho mọi input BTC/USDT/USD, tức test đúng luồng lõi mà CLI sẽ chạy.)
+
+| | Trước khi sửa (đã ghi nhận phiên trước) | Sau khi sửa (phiên này) |
+|---|---|---|
+| `keyvolume_report` | `no_data` (tìm sai file `BTC-USD_2026-07-09.csv`) | **`bearish`/`high`**, trích đúng line #3/#2 (invalidated) vs #7 (active) — dữ liệu thật từ `BTCUSDT_2026-07-09.csv` |
+| `liquidity_sweep_report` | vắng mặt (tắt qua CLI, không cách nào bật) | **`bullish`/`medium`**, trích đúng event thật (line 64110.91, `keyvolume_final_score=60.07`) |
+| `final_advisory_report` | không đọc được 2 tín hiệu trên | Tổng hợp đúng cả 2 tín hiệu xung đột (bearish KeyVolume vs bullish Liquidity Sweep) → `Hold`/`medium`, có disclaimer |
+
+- ✅ Không crash. Thời gian chạy: 87.2s.
+- ✅ Xác nhận loader đọc đúng file `BTCUSDT_2026-07-09.csv` (không phải đoán — path resolve qua `to_research_platform_symbol("BTC-USD")` → `"BTCUSDT"`, xác nhận bằng `.path` field của `KeyVolumeData`/`LiquiditySweepData` trong test loader riêng ở trên).
+
+### Kiểm chứng cách ly memory (Quy tắc 1)
+
+- ✅ `test_memory.md` có thêm 1 entry mới (`BTC-USD`, tổng 19 entry `ENTRY_END`).
+- ✅ `trading_memory.md` (memory thật) — vẫn không tồn tại.
+
+### Điều kiện hoàn thành phiên UX fix
+
+- [x] Vấn đề 1: symbol mapping riêng, không ảnh hưởng Yahoo/yfinance (xác nhận bằng diff rỗng + test `normalize_symbol` không đổi).
+- [x] Vấn đề 2: CLI wizard có bước bật/tắt 2 agent, mặc định tắt, tôn trọng env-precedence.
+- [x] Vấn đề 3: `display_complete_report()` hiện đủ Section VI/VII/VIII, không phá state kiểu cũ.
+- [x] Không sửa logic agent (`keyvolume_agent.py`/`liquidity_sweep_agent.py`/`final_advisor.py` — không file nào trong số này bị đụng).
+- [x] Không sửa Backtest-Trading-Lab.
+- [x] Test CLI thật (qua đúng luồng `propagate()` CLI dùng) với BTC-USD/2026-07-09 — loader đọc đúng `BTCUSDT_2026-07-09.csv`, xác nhận bằng dữ liệu thật trong report.

@@ -341,3 +341,33 @@ Commit:
 
 Next:
 - Phase 8 — Decision Log & Backtest Evidence: extend `_log_state` to include `keyvolume_report`/`liquidity_sweep_report`/`final_advisory_report` (backward-compatible), then a simple backtest-evidence script. Not started.
+
+---
+
+## UX fix (post-diagnosis): symbol mapping, CLI toggle, display_complete_report
+
+Follow-up to the prior session's read-only diagnosis (no code changes there): fixed the 3 root causes identified for why the CLI never showed real KeyVolume/Liquidity Sweep/Final Advisor output for BTC-USD.
+
+Done:
+- **Root cause 1 (symbol mismatch)**: `cli/utils.py::get_ticker()` always normalizes any BTC/USDT/USD input through `normalize_symbol()`, which collapses everything to the Yahoo-dashed form `BTC-USD` -- but the static export files are named with the compact Binance form (`BTCUSDT_2026-07-09.csv`). Fixed with a new, separate module `tradingagents/dataflows/research_platform_symbol.py::to_research_platform_symbol()` (`BTC-USD`/`BTC-USDT`/`BTC-USDC` -> `BTCUSDT`; anything else passes through unchanged), wired into `keyvolume_csv_path()`/`liquidity_sweep_csv_path()` only. Verified `symbol_utils.py` has a zero-line diff and `normalize_symbol()` produces byte-identical output before/after -- the Yahoo/yfinance path is untouched.
+- **Root cause 2 (no CLI toggle)**: added `select_supplementary_signals()` (`cli/utils.py`, a 2-item checkbox, empty selection valid and is the default) and a new "Step 9: Supplementary Signals" in `get_user_selections()` (`cli/main.py`), following the same per-step env-precedence pattern already used by every other step (skip the prompt only when both `TRADINGAGENTS_ENABLE_KEYVOLUME_AGENT`/`_ENABLE_LIQUIDITY_SWEEP_AGENT` are set; an individually-set env var still wins over the checkbox answer). `_build_run_config()` now assigns both config flags from the selection.
+- **Root cause 3 (CLI display stuck at Section V)**: added three new blocks to `cli/main.py::display_complete_report()` after Section V, at the same indentation level as (not nested inside) the `risk_debate_state` block, mirroring `reporting.py::write_report_tree`'s sections 6-8 exactly -- Section VI (KeyVolume), VII (Liquidity Sweep), VIII (Final Advisor), each guarded on `final_state.get(...)` so an old-shape state (no Phase 5/6/7 fields) still stops cleanly at Section V.
+- Deliberately did not touch: any agent file (`keyvolume_agent.py`, `liquidity_sweep_agent.py`, `final_advisor.py`), `symbol_utils.py`, `reporting.py` (already correct since Phase 5.3/6.3/7 -- only the CLI's separate hand-written terminal-display function needed the fix), or anything in Backtest-Trading-Lab.
+
+Test:
+- ✅ `to_research_platform_symbol`: `BTC-USD`/`btc-usd`/`BTC-USDT`/`BTC-USDC` all -> `BTCUSDT`; `BTCUSDT` (already compact) and `AAPL` (stock) pass through unchanged; `ETH-USD` -> `ETHUSDT`.
+- ✅ Loader resolution: `load_keyvolume_data("BTC-USD", "2026-07-09")` and `load_liquidity_sweep_data("BTC-USD", "2026-07-09")` both resolve to the real `BTCUSDT_2026-07-09.csv` files (confirmed via each result's `.path` field), `available=True`.
+- ✅ `select_supplementary_signals()` unit-tested with a mocked `questionary.checkbox` across 5 cases (empty/KV-only/LS-only/both/Esc->None) -- all 5 returned the correct tuple.
+- ✅ Full live pipeline run with `company_of_interest="BTC-USD"` (the exact value the CLI wizard produces for any BTC ticker input -- couldn't drive the interactive wizard's stdin directly, so tested the identical underlying `propagate()` call it makes) + both toggles on: `keyvolume_report` now `bearish`/`high` citing real invalidated/active lines from `BTCUSDT_2026-07-09.csv` (previously `no_data`, wrong file lookup); `liquidity_sweep_report` now `bullish`/`medium` citing the real sweep event (previously absent entirely -- no way to enable it via CLI at all); `final_advisory_report` correctly synthesized the two conflicting signals into `Hold`/`medium` with the disclaimer. No crash, 87.2s.
+- ✅ `display_complete_report()` captured via a recording `Console`: with all three new fields present, Sections VI/VII/VIII render with the real content in the right order; with an old-shape state (no new fields), output still stops cleanly at Section V -- no regression.
+
+Memory path used this session:
+- `~/.tradingagents/memory/test_memory.md` (via `TRADINGAGENTS_MEMORY_LOG_PATH`), for the 1 live pipeline run (`BTC-USD`). `test_memory.md` now has 19 pending entries total; `trading_memory.md` (real memory) still does not exist.
+
+Commit:
+- fix: add research-platform symbol mapping + CLI toggle + display sections VI-VIII
+- docs: record UX fix test results
+
+Next:
+- Phase 8 — Decision Log & Backtest Evidence (unchanged from before this UX-fix session).
+- Not addressed here (out of scope, not asked): actually driving the interactive CLI wizard end-to-end via stdin remains untested directly -- this session verified the same underlying code paths (`get_user_selections()`'s new step logic, `propagate()`, `display_complete_report()`) independently instead.
