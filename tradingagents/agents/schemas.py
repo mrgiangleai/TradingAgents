@@ -401,3 +401,76 @@ def render_keyvolume_report(report: KeyVolumeReport) -> str:
         "",
         report.evidence,
     ])
+
+
+# ---------------------------------------------------------------------------
+# Liquidity Sweep Agent (Phase 6, standalone -- not yet part of Final Advisor)
+# ---------------------------------------------------------------------------
+
+
+class LiquiditySweepSignal(str, Enum):
+    """Implied direction from which side's liquidity was swept -- see
+    docs/agents/liquidity_sweep_agent_design.md section 5. Sourced from
+    Backtest-Trading-Lab's own Module 3 convention (SELL sweep -> BEARISH,
+    BUY sweep -> BULLISH), not invented here -- but explicitly NOT validated
+    as predictive (Module 2's own sweep_strength showed no detectable
+    predictive value at n=34).
+
+    Deliberately excludes "no_data" -- see KeyVolumeSignal's docstring for
+    the same reasoning.
+    """
+
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    NEUTRAL = "neutral"
+
+
+class LiquiditySweepReport(BaseModel):
+    """Structured output produced by the Liquidity Sweep Agent for one symbol/date.
+
+    Only produced when static export data is available -- see
+    liquidity_sweep_agent.py's no-data short-circuit for the other case.
+    """
+
+    signal: LiquiditySweepSignal = Field(
+        description=(
+            "Implied direction from swept liquidity. bullish = the strongest "
+            "evidence is a BUY-direction sweep (liquidity taken above a level) "
+            "of a high-keyvolume_final_score line; bearish = the strongest "
+            "evidence is a SELL-direction sweep of a high-keyvolume_final_score "
+            "line; neutral = mixed/conflicting directions, low-quality swept "
+            "lines, or zero events detected. This is an implied read from a "
+            "structural fact, not a validated forecast -- default toward "
+            "neutral/low confidence unless the evidence is unusually clear."
+        ),
+    )
+    confidence: Literal["low", "medium", "high"] = Field(
+        description=(
+            "Confidence in the signal. 'low' when zero events were detected, "
+            "events conflict in direction, or keyvolume_final_score is weak; "
+            "'medium' when one or two events agree with a moderately strong "
+            "keyvolume_final_score; 'high' only when several events agree and "
+            "keyvolume_final_score is high -- reserve 'high' rarely, since "
+            "sweep_strength itself has no proven predictive value."
+        ),
+    )
+    evidence: str = Field(
+        description=(
+            "1-3 sentences citing specific event(s) by direction/line_price/"
+            "keyvolume_final_score/time that justify the signal. Do not cite "
+            "sweep_strength/sweep_depth/rejection_strength (not provided -- "
+            "excluded as unvalidated), and do not speculate about a "
+            "reversal or continuation beyond what the swept-line quality and "
+            "direction themselves show."
+        ),
+    )
+
+
+def render_liquidity_sweep_report(report: LiquiditySweepReport) -> str:
+    """Render a LiquiditySweepReport to the same markdown shape used elsewhere."""
+    return "\n".join([
+        f"**Signal:** {report.signal.value}",
+        f"**Confidence:** {report.confidence}",
+        "",
+        report.evidence,
+    ])
