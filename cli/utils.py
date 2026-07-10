@@ -50,7 +50,9 @@ def select_analysis_mode() -> str:
                 value="quick_test",
             ),
         ],
-        default="Full Analysis (default) -- Analyst Team -> Research -> Trader -> Risk -> Portfolio Manager -> Final Advisor",
+        # Must match a Choice's `value`, not its display title (questionary
+        # validates `default` against choices_values = [c.value for c in choices]).
+        default="full",
         instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
         style=questionary.Style(
             [
