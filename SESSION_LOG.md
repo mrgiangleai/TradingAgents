@@ -208,3 +208,40 @@ Commit:
 
 Next:
 - Phase 3 (Analyst toggle) is complete — all 4 analysts have working, independently-tested config toggles, single-analyst and combination cases both verified. Next up per ROADMAP.md is Phase 4 — Bước 4.1: define the KeyVolume/Liquidity static data format + file-mapping convention (`docs/data/keyvolume_data_format.md`), not started this session.
+
+---
+
+## Phase 4 (adapter) + Phase 5.1/5.2a/5.2b (KeyVolume Agent, standalone)
+
+User-directed session (not split by individual ROADMAP.md Bước): read Backtest-Trading-Lab's own handoff docs first, audited its real export contract, chose the MVP connection method, wrote the adapter, tested it against 1 real symbol/date, then built the standalone KeyVolume Agent — matches ROADMAP.md Phase 4.1/4.2/4.3 + 5.1/5.2a/5.2b combined into one pass since it's one continuous thread of work.
+
+Done:
+- Read `~/Desktop/Backtest-Trading-Lab/SESSION_HANDOFF.md` and `docs/architecture_handoff.md` (Module 1/2 sections — the rest of that doc, Modules 3-10, is out of scope for KeyVolume) before touching anything, per that project's own handoff convention.
+- Audited the real, already-public contract: `signals/keyvolume_line/service.py::KeyVolumeService` (input: OHLCV DataFrame; output: `KeyVolumeResult` with `export_csv`/`export_json` already built in) and `data/binance_data.py::get_ohlcv` (Binance via `ccxt`). Confirmed Module 1 is FROZEN there and only consumed through the service layer — no changes made to Backtest-Trading-Lab.
+- Chose the MVP connection method and documented the decision with rejected alternatives in `docs/data/keyvolume_data_format.md`: an offline export script (must run with Backtest-Trading-Lab's own venv, since TradingAgents' venv has no `ccxt`), never a live API call inside TradingAgents' runtime graph — matches ROADMAP.md's already-locked "Chưa dùng API ở giai đoạn MVP" rule exactly.
+- Wrote the adapter, split cleanly across the repo boundary: `scripts/keyvolume_export.py` (export side, lives in TradingAgents but runs under Backtest-Trading-Lab's interpreter; includes its own anti-lookahead truncation since ccxt's `since_ms`+`limit` doesn't itself guarantee an upper bound — Quy tắc 6) and `tradingagents/dataflows/keyvolume.py::load_keyvolume_data` (loader side, pure file read, no network, no cross-repo import, returns `available=False` instead of raising on a missing file — Quy tắc 4). Added `enable`-style config key `keyvolume_data_dir` to `default_config.py` for path override/testability, following the existing `results_dir`/`data_cache_dir` pattern.
+- Ran the export for real (BTCUSDT, 2026-07-09) and verified the loader against both the real file and a missing one.
+- Designed (`docs/agents/keyvolume_agent_design.md`) and built (`tradingagents/agents/signals/keyvolume_agent.py` + `KeyVolumeSignal`/`KeyVolumeReport` in `schemas.py`) the standalone KeyVolume Agent, following the Portfolio Manager's `bind_structured` pattern. Key design calls, all documented with rationale: (1) only `final_score` is exposed to the prompt as a scored field — `creation_quality`/`anomaly_score`/`reaction_strength` are excluded because Backtest-Trading-Lab's own Phase 1.5 validation found them non-predictive, and feeding an LLM unvalidated scores risks it rationalizing noise as signal; (2) "bullish/bearish/neutral" is defined as a read on structural memory strength (are the strongest lines still active vs. recently broken), not a price-direction forecast, since the export has no "current price" field to compare a line against; (3) the no-data short-circuit is a plain Python early-return before any LLM call, not a prompt instruction, so there's no path for the model to guess past a missing file; (4) `available=True, lines=[]` (detector ran, found nothing) is explicitly NOT the no-data path — it still goes to the LLM with a note that zero lines were found, since that's itself a real (if weak) observation.
+- Deliberately did not: touch Liquidity Sweep (Phase 6, later), wire the KeyVolume Agent into `setup.py`/`AgentState`/any toggle config (Phase 5.3, later), or modify anything in the Backtest-Trading-Lab repo.
+
+Test:
+- ✅ Export: `scripts/keyvolume_export.py BTCUSDT 2026-07-09` (via Backtest-Trading-Lab's venv) → 720 1h candles fetched and truncated correctly at the UTC day boundary, 9 KeyVolume lines detected, written to `data/keyvolume/BTCUSDT_2026-07-09.csv` with the exact 20-column schema audited from `export.py`.
+- ✅ Loader: real file → `available=True`, 9 rows, correct type coercion (`average_bounce_strength=None` for a never-bounced line is a valid value, not a parse failure); missing file → `available=False`, `lines=[]`, no crash.
+- ✅ Agent, no-data case (`ETHUSDT`/`2099-01-01`): `signal="no_data"`, `confidence=None`, **0.000s** — confirms the short-circuit truly skips the LLM, not just runs fast.
+- ✅ Agent, real-data case (`BTCUSDT`/`2026-07-09`) run 3x: stable schema every time (`signal` always a valid enum value, `confidence` always low/medium/high), evidence cites specific real lines by id/price/final_score each time (e.g., line #7 active at final_score=44.38 vs. lines #2/#3/#9 invalidated at final_score 33-35) — matches the "structural memory strength" framing, no speculative price-direction language observed.
+- ✅ Agent, available-but-zero-lines edge case (synthetic header-only CSV): correctly distinguished from no-data — still invoked the LLM, got `signal="neutral"`, `confidence="low"`, evidence explicitly noting zero lines detected.
+- Full results in `TEST_PLAN.md` under "Phase 4 (adapter) + Phase 5.1/5.2a/5.2b".
+
+Memory path used this session:
+- N/A — this session never called `TradingAgentsGraph.propagate()` or touched the memory log; all testing was standalone (loader + agent function calls only).
+
+Commit:
+- chore: add keyvolume export adapter (Backtest-Trading-Lab -> static CSV)
+- docs: document keyvolume data format + connection method + real sample
+- feat: add keyvolume data loader
+- docs: design keyvolume agent
+- feat: add standalone keyvolume agent
+
+Next:
+- Phase 5.3 — wire the KeyVolume Agent into the graph as a real node (needs an `AgentState` field + a toggle config flag, following the Phase 3 analyst-toggle pattern), not started this session.
+- Phase 6 — Liquidity Sweep Agent (same structure as Phase 4/5, different data format from Backtest-Trading-Lab's Module 2), not started.

@@ -219,3 +219,49 @@ Cả 3 tổ hợp (tắt 2 / tắt 3 / tắt cả 4) đều hoạt động đún
 - [x] Tắt 3 analyst cùng lúc — chạy thật, không crash.
 - [x] Tắt cả 4 — báo lỗi rõ ràng (`ValueError`), fail-fast, không chạy input rỗng.
 - [x] Không phát hiện lỗi thật → không sửa code (đúng yêu cầu phiên này).
+
+---
+
+## Phase 4 (adapter) + Phase 5.1/5.2a/5.2b (standalone KeyVolume Agent)
+
+**Ngày chạy:** 2026-07-10
+**Bối cảnh:** Phiên do user yêu cầu trực tiếp (6 bước: đọc handoff → audit contract/export → chọn connection → viết adapter → test 1 symbol/date → tạo KeyVolume Agent), không tách theo từng Bước nhỏ của ROADMAP.md như thường lệ — gộp Phase 4.1/4.2/4.3 + 5.1/5.2a/5.2b vào 1 phiên vì cùng 1 mạch việc liền nhau.
+
+### Contract đã audit (Backtest-Trading-Lab, repo sibling — không sửa gì ở đó)
+
+`signals/keyvolume_line/service.py::KeyVolumeService` (input: OHLCV DataFrame; output: `KeyVolumeResult(lines, records)`, có sẵn `export_csv`/`export_json`) + `data/binance_data.py::get_ohlcv` (Binance qua `ccxt`). Chi tiết đầy đủ + quyết định connection (static export offline, không dùng API trong runtime) ghi ở `docs/data/keyvolume_data_format.md`.
+
+### Test 1 — Export thật (1 symbol/date)
+
+```
+/path/to/Backtest-Trading-Lab/.venv/bin/python scripts/keyvolume_export.py BTCUSDT 2026-07-09
+```
+
+- ✅ Fetch 720 nến 1h (2026-06-10 → 2026-07-09 23:00, đúng biên UTC, không lọt nến ngày 07-10 — Quy tắc 6).
+- ✅ `KeyVolumeService` sinh 9 line, ghi ra `data/keyvolume/BTCUSDT_2026-07-09.csv` — schema đúng 20 cột như audit ở `export.py::line_to_dict`.
+
+### Test 2 — Loader (`tradingagents/dataflows/keyvolume.py::load_keyvolume_data`)
+
+| Case | Input | Kết quả |
+|---|---|---|
+| File thật tồn tại | `("BTCUSDT", "2026-07-09")` | `available=True`, 9 dòng, kiểu dữ liệu ép đúng (float/int/bool), `average_bounce_strength=None` cho line chưa từng bounce (đúng, không phải lỗi parse) |
+| File không tồn tại | `("ETHUSDT", "2099-01-01")` | `available=False`, `lines=[]`, không crash |
+
+### Test 3 — KeyVolume Agent standalone (`tradingagents/agents/signals/keyvolume_agent.py`)
+
+| Case | Input | Kết quả |
+|---|---|---|
+| Thiếu dữ liệu | `("ETHUSDT", "2099-01-01")` | `signal="no_data"`, `confidence=None`, **0.000s** (xác nhận không gọi LLM — short-circuit thật, không phải chỉ nhanh) |
+| Dữ liệu thật, chạy 3 lần | `("BTCUSDT", "2026-07-09")` × 3 | Cả 3 lần: `signal="neutral"`, `confidence="medium"`, evidence trích dẫn cụ thể line #7 (`final_score=44.38`, `active`) đối lập với line #2/#3/#9 (`invalidated`, `broken`/`overtested`, `final_score` 33-35) — đúng thiết kế "structural memory strength", không suy đoán giá tương lai |
+| Có export nhưng 0 line phát hiện | file CSV chỉ có header, `("TESTEMPTY", "2026-07-09")` | `available=True, lines=[]` (không phải no_data) → vẫn gọi LLM → `signal="neutral"`, `confidence="low"`, evidence nêu rõ "no lines detected" — đúng phân biệt "thiếu file" vs "có file, 0 kết quả" |
+
+Prompt cuối cùng: nhúng trực tiếp trong `keyvolume_agent.py` (không tách file `docs/agents/keyvolume_agent_prompt.md` riêng — prompt đủ ngắn, đã có đầy đủ rationale ở `docs/agents/keyvolume_agent_design.md` mục 4/5, tách file thêm không tăng giá trị cho MVP).
+
+### Điều kiện hoàn thành phiên này
+
+- [x] Đọc handoff (`SESSION_HANDOFF.md`, `docs/architecture_handoff.md` Module 1/2) trước khi audit.
+- [x] Audit contract/export thật (không đoán field).
+- [x] Chọn + ghi rõ cách kết nối MVP (static export offline, không API runtime) — khớp Quy tắc "chưa dùng API ở giai đoạn MVP" đã khoá trong `ROADMAP.md`.
+- [x] Viết adapter (`scripts/keyvolume_export.py` — export side; `tradingagents/dataflows/keyvolume.py` — loader side).
+- [x] Test dữ liệu 1 symbol/date thật — pass.
+- [x] Tạo KeyVolume Agent standalone, test cả no-data/dữ liệu thật/0-line — pass. **Chưa** wire vào graph (Phase 5.3, chưa làm).
